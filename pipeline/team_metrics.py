@@ -30,12 +30,13 @@ def _find_team(team_name: str, df: pd.DataFrame, col: str = "team_name") -> pd.D
 def get_rest_days(team_name: str, game_logs_df: pd.DataFrame | None = None) -> float:
     """Days since this team last played. Defaults to 2.5 if unknown."""
     if game_logs_df is not None:
-        if game_logs_df.empty or "team_name" not in game_logs_df.columns:
+        try:
+            team_rows = _find_team(team_name, game_logs_df)
+            if team_rows.empty:
+                return 2.5
+            last_game = team_rows["game_date"].max()
+        except (KeyError, AttributeError, TypeError):
             return 2.5
-        team_rows = _find_team(team_name, game_logs_df)
-        if team_rows.empty:
-            return 2.5
-        last_game = team_rows["game_date"].max()
     else:
         conn = get_conn()
         df   = pd.read_sql(
@@ -59,18 +60,19 @@ def get_opp_pts_allowed(team_name: str, n: int = RECENT_N, game_logs_df: pd.Data
     Computed by joining game_logs: find the opponent's pts in each of this team's games.
     """
     if game_logs_df is not None:
-        if game_logs_df.empty or "team_name" not in game_logs_df.columns:
+        try:
+            team_rows = _find_team(team_name, game_logs_df).sort_values("game_date", ascending=False).head(n)
+            if team_rows.empty:
+                return LEAGUE_AVG_TEAM_PTS
+            game_ids = team_rows["game_id"].tolist()
+            team_ids = team_rows["team_id"].astype(str).tolist()
+            opp_rows = game_logs_df[
+                game_logs_df["game_id"].isin(game_ids) &
+                (~game_logs_df["team_id"].astype(str).isin(team_ids))
+            ]
+            return round(float(opp_rows["pts"].mean()), 2) if not opp_rows.empty else LEAGUE_AVG_TEAM_PTS
+        except (KeyError, AttributeError, TypeError):
             return LEAGUE_AVG_TEAM_PTS
-        team_rows = _find_team(team_name, game_logs_df).sort_values("game_date", ascending=False).head(n)
-        if team_rows.empty:
-            return LEAGUE_AVG_TEAM_PTS
-        game_ids = team_rows["game_id"].tolist()
-        team_ids = team_rows["team_id"].astype(str).tolist()
-        opp_rows = game_logs_df[
-            game_logs_df["game_id"].isin(game_ids) &
-            (~game_logs_df["team_id"].astype(str).isin(team_ids))
-        ]
-        return round(float(opp_rows["pts"].mean()), 2) if not opp_rows.empty else LEAGUE_AVG_TEAM_PTS
     conn = get_conn()
     df   = pd.read_sql(f"""
         SELECT tgl2.pts AS opp_pts
@@ -96,13 +98,14 @@ def get_pace_factor(team_name: str, n: int = RECENT_N, game_logs_df: pd.DataFram
     < 1.0 = slow pace, fewer possessions.
     """
     if game_logs_df is not None:
-        if game_logs_df.empty or "team_name" not in game_logs_df.columns:
+        try:
+            team_rows = _find_team(team_name, game_logs_df).sort_values("game_date", ascending=False).head(n)
+            if team_rows.empty:
+                return 1.0
+            avg_pts = float(team_rows["pts"].mean())
+            return round(avg_pts / LEAGUE_AVG_TEAM_PTS, 4)
+        except (KeyError, AttributeError, TypeError):
             return 1.0
-        team_rows = _find_team(team_name, game_logs_df).sort_values("game_date", ascending=False).head(n)
-        if team_rows.empty:
-            return 1.0
-        avg_pts = float(team_rows["pts"].mean())
-        return round(avg_pts / LEAGUE_AVG_TEAM_PTS, 4)
     conn = get_conn()
     df   = pd.read_sql(
         f"SELECT pts FROM team_game_logs WHERE team_name LIKE ? ORDER BY game_date DESC LIMIT {n}",

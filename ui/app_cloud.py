@@ -2,7 +2,15 @@
 WNBA Bet — Streamlit Community Cloud version.
 Fetches all data in-memory (no SQLite). Refresh is passcode-gated.
 """
-import sys, os
+import sys, os, shutil, pathlib
+
+# Clear stale .pyc bytecode on first startup so Streamlit Cloud always
+# runs the current source — without this, cached .pyc files survive
+# deployments and execute old code even after the .py files are updated.
+if "picks.engine" not in sys.modules:
+    for _cache in pathlib.Path(__file__).resolve().parent.parent.rglob("__pycache__"):
+        shutil.rmtree(_cache, ignore_errors=True)
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import streamlit as st

@@ -9,7 +9,7 @@ An ML-driven tool that predicts WNBA game outcomes (moneyline, spread, totals) a
 
 ## Live Demo
 
-🚀 **[wnba-bet.streamlit.app](https://wnba-bet.streamlit.app)**
+🚀 **[bet-wnba.streamlit.app](https://bet-wnba.streamlit.app)**
 
 ---
 

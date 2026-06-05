@@ -53,7 +53,10 @@ def build_game_picks(games: list[dict], bankroll: float, unit_size: float, odds_
         home = game["home_team"]
         away = game["away_team"]
 
-        pred = predict_game(home, away, game_logs_df=game_logs_df)
+        try:
+            pred = predict_game(home, away, game_logs_df=game_logs_df)
+        except Exception:
+            continue
         if not pred:
             continue
 

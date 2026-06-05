@@ -210,6 +210,14 @@ with st.spinner("Loading today's picks…"):
 with st.sidebar:
     st.caption(f"🕐 Last updated: **{data['fetched_at']}** CT")
     st.caption("Data: PrizePicks · Underdog · The Odds API")
+    tl = data.get("team_logs")
+    pl = data.get("player_logs")
+    st.caption(
+        f"Games: {len(data['games'])} · "
+        f"Lines: {len(data['lines'])} · "
+        f"Team logs: {len(tl) if tl is not None and not tl.empty else 0} rows · "
+        f"Player logs: {len(pl) if pl is not None and not pl.empty else 0} rows"
+    )
 
 
 # ── Build picks ────────────────────────────────────────────────────────────────

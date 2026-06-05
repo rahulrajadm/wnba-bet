@@ -129,10 +129,17 @@ def load_all_data():
         f_ud          = ex.submit(ud_fetch)
         f_team_logs   = ex.submit(fetch_team_game_logs)
         f_player_logs = ex.submit(fetch_player_game_logs)
-        pp_lines    = f_pp.result()
-        ud_lines    = f_ud.result()
-        team_logs   = f_team_logs.result()
-        player_logs = f_player_logs.result()
+        pp_lines    = f_pp.result(timeout=20)
+        ud_lines    = f_ud.result(timeout=20)
+        # NBA Stats API may be slow/blocked on cloud — hard 15s deadline
+        try:
+            team_logs = f_team_logs.result(timeout=15)
+        except Exception:
+            team_logs = pd.DataFrame()
+        try:
+            player_logs = f_player_logs.result(timeout=15)
+        except Exception:
+            player_logs = pd.DataFrame()
 
     # Derive combo stats for props model
     if not player_logs.empty and "pts" in player_logs.columns:

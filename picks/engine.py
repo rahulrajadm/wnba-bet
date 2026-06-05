@@ -2,6 +2,7 @@
 WNBA picks engine.
 Assembles game predictions (ML, spread, totals) + player props into
 ranked +EV picks with confidence tiers, risk profiles, and Kelly stakes.
+Supports optional in-memory DataFrames (game_logs_df, player_logs_df, team_logs_df).
 """
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))

@@ -38,7 +38,7 @@ def is_high_interest(pick: dict) -> bool:
     return True
 
 
-def build_game_picks(games: list[dict], bankroll: float, unit_size: float, odds_data: list[dict] | None = None) -> list[dict]:
+def build_game_picks(games: list[dict], bankroll: float, unit_size: float, odds_data: list[dict] | None = None, game_logs_df=None) -> list[dict]:
     """Generate ML, spread, and totals picks for today's games."""
     if odds_data is not None:
         odds_df = pd.DataFrame(odds_data)
@@ -52,7 +52,7 @@ def build_game_picks(games: list[dict], bankroll: float, unit_size: float, odds_
         home = game["home_team"]
         away = game["away_team"]
 
-        pred = predict_game(home, away)
+        pred = predict_game(home, away, game_logs_df=game_logs_df)
         if not pred:
             continue
 
@@ -224,9 +224,9 @@ def build_game_picks(games: list[dict], bankroll: float, unit_size: float, odds_
     return picks
 
 
-def build_prop_picks(bankroll: float, unit_size: float, lines_data=None) -> list[dict]:
+def build_prop_picks(bankroll: float, unit_size: float, lines_data=None, player_logs_df=None, team_logs_df=None) -> list[dict]:
     """Generate player prop picks."""
-    raw   = predict_props(lines_data=lines_data)
+    raw   = predict_props(lines_data=lines_data, player_logs_df=player_logs_df, team_logs_df=team_logs_df)
     picks = []
 
     for pred in raw:
@@ -286,9 +286,12 @@ def build_picks(
     unit_size: float = 10.0,
     lines_data=None,
     odds_data=None,
+    game_logs_df=None,
+    player_logs_df=None,
+    team_logs_df=None,
 ) -> list[dict]:
-    game_picks = build_game_picks(games, bankroll, unit_size, odds_data=odds_data)
-    prop_picks = build_prop_picks(bankroll, unit_size, lines_data)
+    game_picks = build_game_picks(games, bankroll, unit_size, odds_data=odds_data, game_logs_df=game_logs_df)
+    prop_picks = build_prop_picks(bankroll, unit_size, lines_data, player_logs_df=player_logs_df, team_logs_df=team_logs_df)
     all_picks  = game_picks + prop_picks
     all_picks.sort(
         key=lambda x: (TIER_RANK.get(x["confidence_tier"], 0), x["ev_per_100"]),

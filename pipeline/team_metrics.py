@@ -27,28 +27,46 @@ def _find_team(team_name: str, df: pd.DataFrame, col: str = "team_name") -> pd.D
     return match
 
 
-def get_rest_days(team_name: str) -> float:
+def get_rest_days(team_name: str, game_logs_df: pd.DataFrame | None = None) -> float:
     """Days since this team last played. Defaults to 2.5 if unknown."""
-    conn = get_conn()
-    df   = pd.read_sql(
-        "SELECT MAX(game_date) as last_game FROM team_game_logs WHERE team_name LIKE ?",
-        conn, params=(f"%{team_name.strip().split()[-1]}%",)
-    )
-    conn.close()
-    if df.empty or pd.isna(df["last_game"].iloc[0]):
-        return 2.5
+    if game_logs_df is not None:
+        team_rows = _find_team(team_name, game_logs_df)
+        if team_rows.empty:
+            return 2.5
+        last_game = team_rows["game_date"].max()
+    else:
+        conn = get_conn()
+        df   = pd.read_sql(
+            "SELECT MAX(game_date) as last_game FROM team_game_logs WHERE team_name LIKE ?",
+            conn, params=(f"%{team_name.strip().split()[-1]}%",)
+        )
+        conn.close()
+        if df.empty or pd.isna(df["last_game"].iloc[0]):
+            return 2.5
+        last_game = df["last_game"].iloc[0]
     try:
-        last = pd.to_datetime(df["last_game"].iloc[0]).date()
+        last = pd.to_datetime(last_game).date()
         return float((date.today() - last).days)
     except Exception:
         return 2.5
 
 
-def get_opp_pts_allowed(team_name: str, n: int = RECENT_N) -> float:
+def get_opp_pts_allowed(team_name: str, n: int = RECENT_N, game_logs_df: pd.DataFrame | None = None) -> float:
     """
     Average points this team ALLOWED per game over last N games.
     Computed by joining game_logs: find the opponent's pts in each of this team's games.
     """
+    if game_logs_df is not None:
+        team_rows = _find_team(team_name, game_logs_df).sort_values("game_date", ascending=False).head(n)
+        if team_rows.empty:
+            return LEAGUE_AVG_TEAM_PTS
+        game_ids = team_rows["game_id"].tolist()
+        team_ids = team_rows["team_id"].astype(str).tolist()
+        opp_rows = game_logs_df[
+            game_logs_df["game_id"].isin(game_ids) &
+            (~game_logs_df["team_id"].astype(str).isin(team_ids))
+        ]
+        return round(float(opp_rows["pts"].mean()), 2) if not opp_rows.empty else LEAGUE_AVG_TEAM_PTS
     conn = get_conn()
     df   = pd.read_sql(f"""
         SELECT tgl2.pts AS opp_pts
@@ -66,13 +84,19 @@ def get_opp_pts_allowed(team_name: str, n: int = RECENT_N) -> float:
     return round(float(df["opp_pts"].mean()), 2)
 
 
-def get_pace_factor(team_name: str, n: int = RECENT_N) -> float:
+def get_pace_factor(team_name: str, n: int = RECENT_N, game_logs_df: pd.DataFrame | None = None) -> float:
     """
     Pace factor relative to league average.
     Proxy: team's avg pts per game / league average (82).
     > 1.0 = fast pace, more possessions, more stat opportunities.
     < 1.0 = slow pace, fewer possessions.
     """
+    if game_logs_df is not None:
+        team_rows = _find_team(team_name, game_logs_df).sort_values("game_date", ascending=False).head(n)
+        if team_rows.empty:
+            return 1.0
+        avg_pts = float(team_rows["pts"].mean())
+        return round(avg_pts / LEAGUE_AVG_TEAM_PTS, 4)
     conn = get_conn()
     df   = pd.read_sql(
         f"SELECT pts FROM team_game_logs WHERE team_name LIKE ? ORDER BY game_date DESC LIMIT {n}",
@@ -85,13 +109,13 @@ def get_pace_factor(team_name: str, n: int = RECENT_N) -> float:
     return round(avg_pts / LEAGUE_AVG_TEAM_PTS, 4)
 
 
-def get_game_pace_factor(home_team: str, away_team: str) -> float:
+def get_game_pace_factor(home_team: str, away_team: str, game_logs_df: pd.DataFrame | None = None) -> float:
     """
     Expected pace for a specific matchup — average of both teams' pace factors.
     Applied to adjust player prop counting stats.
     """
-    home_pf = get_pace_factor(home_team)
-    away_pf = get_pace_factor(away_team)
+    home_pf = get_pace_factor(home_team, game_logs_df=game_logs_df)
+    away_pf = get_pace_factor(away_team, game_logs_df=game_logs_df)
     return round((home_pf + away_pf) / 2, 4)
 
 

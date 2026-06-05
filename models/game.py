@@ -27,14 +27,19 @@ def load_models():
     return ml, sprd, total, feats
 
 
-def get_team_rolling_stats(team_name: str, n: int = 10) -> dict:
-    """Pull a team's last N game rolling averages from the DB."""
-    conn = get_conn()
-    df   = pd.read_sql(
-        "SELECT * FROM team_game_logs WHERE team_name LIKE ? ORDER BY game_date DESC LIMIT ?",
-        conn, params=(f"%{team_name.split()[-1]}%", n)
-    )
-    conn.close()
+def get_team_rolling_stats(team_name: str, n: int = 10, game_logs_df=None) -> dict:
+    """Pull a team's last N game rolling averages from the DB or an in-memory DataFrame."""
+    if game_logs_df is not None:
+        last = team_name.strip().split()[-1].lower()
+        df = game_logs_df[game_logs_df["team_name"].str.lower().str.contains(last, na=False)]
+        df = df.sort_values("game_date", ascending=False).head(n)
+    else:
+        conn = get_conn()
+        df   = pd.read_sql(
+            "SELECT * FROM team_game_logs WHERE team_name LIKE ? ORDER BY game_date DESC LIMIT ?",
+            conn, params=(f"%{team_name.split()[-1]}%", n)
+        )
+        conn.close()
 
     if df.empty:
         return {}
@@ -54,10 +59,10 @@ def get_team_rolling_stats(team_name: str, n: int = 10) -> dict:
     }
 
 
-def build_matchup_vector(home_team: str, away_team: str, feat_cols: list[str]) -> pd.DataFrame:
+def build_matchup_vector(home_team: str, away_team: str, feat_cols: list[str], game_logs_df=None) -> pd.DataFrame:
     """Build a single-row feature vector for a matchup."""
-    home_stats = get_team_rolling_stats(home_team)
-    away_stats = get_team_rolling_stats(away_team)
+    home_stats = get_team_rolling_stats(home_team, game_logs_df=game_logs_df)
+    away_stats = get_team_rolling_stats(away_team, game_logs_df=game_logs_df)
 
     if not home_stats or not away_stats:
         return None
@@ -70,27 +75,26 @@ def build_matchup_vector(home_team: str, away_team: str, feat_cols: list[str]) -
             row[f"away_{col}_last{w}"] = away_stats.get(col, 0)
     row["home_win_pct_last10"] = home_stats.get("win_pct", 0.5)
     row["away_win_pct_last10"] = away_stats.get("win_pct", 0.5)
-    row["home_rest_days"]      = get_rest_days(home_team)
-    row["away_rest_days"]      = get_rest_days(away_team)
+    row["home_rest_days"]      = get_rest_days(home_team, game_logs_df=game_logs_df)
+    row["away_rest_days"]      = get_rest_days(away_team, game_logs_df=game_logs_df)
     row["rest_advantage"]      = row["home_rest_days"] - row["away_rest_days"]
     row["home_court"]          = 1
 
     df = pd.DataFrame([row])
-    # Align to training feature columns
     for col in feat_cols:
         if col not in df.columns:
             df[col] = 0
     return df[feat_cols]
 
 
-def predict_game(home_team: str, away_team: str) -> dict | None:
+def predict_game(home_team: str, away_team: str, game_logs_df=None) -> dict | None:
     """Generate ML, spread, and totals predictions for a matchup."""
     try:
         ml_model, sprd_model, total_model, feat_cols = load_models()
     except Exception:
         return None
 
-    X = build_matchup_vector(home_team, away_team, feat_cols)
+    X = build_matchup_vector(home_team, away_team, feat_cols, game_logs_df=game_logs_df)
     if X is None:
         return None
 

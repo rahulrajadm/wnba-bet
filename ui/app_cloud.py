@@ -15,6 +15,7 @@ from pipeline.schedule import fetch_today_games
 from pipeline.prizepicks import fetch_wnba_lines as pp_fetch
 from pipeline.underdog import fetch_wnba_lines as ud_fetch
 from pipeline.odds import fetch_odds, parse_and_save
+from pipeline.cloud_data import fetch_team_game_logs, fetch_player_game_logs
 from picks.engine import build_picks, best_props_per_player, is_high_interest
 from analysis.confidence import TIER_COLORS, TIER_RANK
 from analysis.risk import RISK_COLORS
@@ -88,10 +89,23 @@ def fetch_all_odds_inmemory() -> list[dict]:
 
 @st.cache_data(show_spinner=False)
 def load_all_data():
-    games    = fetch_today_games()
-    pp_lines = pp_fetch()
-    ud_lines = ud_fetch()
-    odds     = fetch_all_odds_inmemory()
+    games       = fetch_today_games()
+    pp_lines    = pp_fetch()
+    ud_lines    = ud_fetch()
+    odds        = fetch_all_odds_inmemory()
+    team_logs   = fetch_team_game_logs()
+    player_logs = fetch_player_game_logs()
+
+    # Derive combo stats for props model
+    if not player_logs.empty:
+        player_logs["pra"]     = player_logs["pts"] + player_logs["reb"] + player_logs["ast"]
+        player_logs["pts_reb"] = player_logs["pts"] + player_logs["reb"]
+        player_logs["pts_ast"] = player_logs["pts"] + player_logs["ast"]
+        player_logs["reb_ast"] = player_logs["reb"] + player_logs["ast"]
+        player_logs["blk_stl"] = player_logs["blk"] + player_logs["stl"]
+        player_logs["fantasy"] = (player_logs["pts"] + player_logs["reb"] * 1.2
+                                  + player_logs["ast"] * 1.5 + player_logs["stl"] * 3
+                                  + player_logs["blk"] * 3 - player_logs["tov"])
 
     all_lines = []
     from datetime import timezone
@@ -104,10 +118,12 @@ def load_all_data():
         all_lines.append(p)
 
     return {
-        "games":      games,
-        "lines":      all_lines,
-        "odds":       odds,
-        "fetched_at": datetime.now(ZoneInfo("America/Chicago")).strftime("%b %d %Y, %I:%M %p"),
+        "games":       games,
+        "lines":       all_lines,
+        "odds":        odds,
+        "team_logs":   team_logs,
+        "player_logs": player_logs,
+        "fetched_at":  datetime.now(ZoneInfo("America/Chicago")).strftime("%b %d %Y, %I:%M %p"),
     }
 
 
@@ -161,6 +177,9 @@ def load_picks_cloud(bankroll, unit_size, _cache_key):
         unit_size=unit_size,
         lines_data=data["lines"],
         odds_data=data["odds"],
+        game_logs_df=data["team_logs"],
+        player_logs_df=data["player_logs"],
+        team_logs_df=data["team_logs"],
     )
 
 all_picks = load_picks_cloud(bankroll, unit_size, data["fetched_at"])

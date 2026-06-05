@@ -113,12 +113,16 @@ def _build_team_opponent_map(games: list[dict]) -> dict[str, str]:
     return opp_map
 
 
-def predict_props(lines_data: list[dict] | None = None, games: list[dict] | None = None) -> list[dict]:
-    logs = load_player_logs()
-    if logs.empty:
+def predict_props(
+    lines_data: list[dict] | None = None,
+    games: list[dict] | None = None,
+    player_logs_df=None,
+    team_logs_df=None,
+) -> list[dict]:
+    logs = player_logs_df if player_logs_df is not None else load_player_logs()
+    if logs is None or (hasattr(logs, "empty") and logs.empty):
         return []
 
-    # Load today's games for opponent lookup
     if games is None:
         from pipeline.schedule import get_today_games
         games = get_today_games()
@@ -161,13 +165,13 @@ def predict_props(lines_data: list[dict] | None = None, games: list[dict] | None
 
         # Fix 2: Actual opponent defensive rating
         opp_team    = opp_map.get(player_team, "")
-        opp_pts     = get_opp_pts_allowed(opp_team) if opp_team else LEAGUE_AVG_DRTG
+        opp_pts     = get_opp_pts_allowed(opp_team, game_logs_df=team_logs_df) if opp_team else LEAGUE_AVG_DRTG
         def_adj     = get_def_rating_adj(opp_pts)
         blended     = max(blended * def_adj, 0.0)
 
         # Fix 3: Pace adjustment — scale stats by expected game pace vs league avg
         if opp_team and player_team:
-            pace_factor = get_game_pace_factor(player_team, opp_team)
+            pace_factor = get_game_pace_factor(player_team, opp_team, game_logs_df=team_logs_df)
         else:
             pace_factor = 1.0
         # Pace only affects counting stats (pts, reb, ast, combo stats)

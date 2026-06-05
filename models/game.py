@@ -30,6 +30,8 @@ def load_models():
 def get_team_rolling_stats(team_name: str, n: int = 10, game_logs_df=None) -> dict:
     """Pull a team's last N game rolling averages from the DB or an in-memory DataFrame."""
     if game_logs_df is not None:
+        if game_logs_df.empty or "team_name" not in game_logs_df.columns:
+            return {}
         last = team_name.strip().split()[-1].lower()
         df = game_logs_df[game_logs_df["team_name"].str.lower().str.contains(last, na=False)]
         df = df.sort_values("game_date", ascending=False).head(n)

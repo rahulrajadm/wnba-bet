@@ -10,11 +10,13 @@ import pandas as pd
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dotenv import load_dotenv
+load_dotenv(os.path.join(os.path.dirname(__file__), "../.env"))
 
 from pipeline.schedule import fetch_today_games
 from pipeline.prizepicks import fetch_wnba_lines as pp_fetch
 from pipeline.underdog import fetch_wnba_lines as ud_fetch
-from pipeline.odds import fetch_odds, parse_and_save
 from pipeline.cloud_data import fetch_team_game_logs, fetch_player_game_logs
 from picks.engine import build_picks, best_props_per_player, is_high_interest
 from analysis.confidence import TIER_COLORS, TIER_RANK
@@ -27,77 +29,91 @@ st.set_page_config(page_title="WNBA Bet", page_icon="🏀", layout="wide", initi
 # ── In-memory data loading ─────────────────────────────────────────────────────
 
 def fetch_all_odds_inmemory() -> list[dict]:
-    """Fetch WNBA odds for all markets and return as flat list of dicts."""
-    import os
-    from dotenv import load_dotenv
-    load_dotenv(os.path.join(os.path.dirname(__file__), "../.env"))
+    """Fetch WNBA odds for all markets in a single API call."""
+    import requests
     from datetime import timezone
 
-    rows = []
-    fetched_at = datetime.now(timezone.utc).isoformat()
+    api_key = os.getenv("ODDS_API_KEY")
+    if not api_key:
+        return []
 
-    for market in ["h2h", "spreads", "totals"]:
-        try:
-            games = fetch_odds(market)
-            for game in games:
-                game_id   = game["id"]
-                home_team = game["home_team"]
-                away_team = game["away_team"]
-                for bm in game.get("bookmakers", []):
-                    book = bm["key"]
-                    for mkt in bm.get("markets", []):
-                        if mkt["key"] != market:
-                            continue
-                        outcomes = {o["name"]: o for o in mkt["outcomes"]}
-                        if market == "h2h":
-                            rows.append({
-                                "fetched_at": fetched_at, "platform": book,
-                                "game_id": game_id, "home_team": home_team, "away_team": away_team,
-                                "market": "moneyline",
-                                "home_odds": outcomes.get(home_team, {}).get("price"),
-                                "away_odds": outcomes.get(away_team, {}).get("price"),
-                                "home_spread": None, "away_spread": None,
-                                "over_odds": None, "under_odds": None, "total_line": None,
-                            })
-                        elif market == "spreads":
-                            ho = outcomes.get(home_team, {})
-                            ao = outcomes.get(away_team, {})
-                            rows.append({
-                                "fetched_at": fetched_at, "platform": book,
-                                "game_id": game_id, "home_team": home_team, "away_team": away_team,
-                                "market": "spread",
-                                "home_odds": ho.get("price"), "away_odds": ao.get("price"),
-                                "home_spread": ho.get("point"), "away_spread": ao.get("point"),
-                                "over_odds": None, "under_odds": None, "total_line": None,
-                            })
-                        elif market == "totals":
-                            ov = outcomes.get("Over", {})
-                            un = outcomes.get("Under", {})
-                            rows.append({
-                                "fetched_at": fetched_at, "platform": book,
-                                "game_id": game_id, "home_team": home_team, "away_team": away_team,
-                                "market": "totals",
-                                "home_odds": None, "away_odds": None,
-                                "home_spread": None, "away_spread": None,
-                                "over_odds": ov.get("price"), "under_odds": un.get("price"),
-                                "total_line": ov.get("point"),
-                            })
-        except Exception as e:
-            st.warning(f"Odds fetch warning ({market}): {e}")
+    fetched_at = datetime.now(timezone.utc).isoformat()
+    rows = []
+    try:
+        resp = requests.get(
+            "https://api.the-odds-api.com/v4/sports/basketball_wnba/odds",
+            params={
+                "apiKey":     api_key,
+                "regions":    "us",
+                "markets":    "h2h,spreads,totals",
+                "oddsFormat": "american",
+                "dateFormat": "iso",
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        for game in resp.json():
+            game_id   = game["id"]
+            home_team = game["home_team"]
+            away_team = game["away_team"]
+            for bm in game.get("bookmakers", []):
+                book = bm["key"]
+                mkts = {m["key"]: m for m in bm.get("markets", [])}
+
+                if "h2h" in mkts:
+                    outcomes = {o["name"]: o for o in mkts["h2h"]["outcomes"]}
+                    rows.append({"fetched_at": fetched_at, "platform": book,
+                                 "game_id": game_id, "home_team": home_team, "away_team": away_team,
+                                 "market": "moneyline",
+                                 "home_odds": outcomes.get(home_team, {}).get("price"),
+                                 "away_odds": outcomes.get(away_team, {}).get("price"),
+                                 "home_spread": None, "away_spread": None,
+                                 "over_odds": None, "under_odds": None, "total_line": None})
+
+                if "spreads" in mkts:
+                    outcomes = {o["name"]: o for o in mkts["spreads"]["outcomes"]}
+                    ho = outcomes.get(home_team, {}); ao = outcomes.get(away_team, {})
+                    rows.append({"fetched_at": fetched_at, "platform": book,
+                                 "game_id": game_id, "home_team": home_team, "away_team": away_team,
+                                 "market": "spread",
+                                 "home_odds": ho.get("price"), "away_odds": ao.get("price"),
+                                 "home_spread": ho.get("point"), "away_spread": ao.get("point"),
+                                 "over_odds": None, "under_odds": None, "total_line": None})
+
+                if "totals" in mkts:
+                    outcomes = {o["name"]: o for o in mkts["totals"]["outcomes"]}
+                    ov = outcomes.get("Over", {}); un = outcomes.get("Under", {})
+                    rows.append({"fetched_at": fetched_at, "platform": book,
+                                 "game_id": game_id, "home_team": home_team, "away_team": away_team,
+                                 "market": "totals",
+                                 "home_odds": None, "away_odds": None,
+                                 "home_spread": None, "away_spread": None,
+                                 "over_odds": ov.get("price"), "under_odds": un.get("price"),
+                                 "total_line": ov.get("point")})
+    except Exception as e:
+        st.warning(f"Odds fetch warning: {e}")
     return rows
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=14400)  # 4-hour TTL
 def load_all_data():
-    games       = fetch_today_games()
-    pp_lines    = pp_fetch()
-    ud_lines    = ud_fetch()
-    odds        = fetch_all_odds_inmemory()
-    team_logs   = fetch_team_game_logs()
-    player_logs = fetch_player_game_logs()
+    # Run all slow fetches in parallel
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        f_games       = ex.submit(fetch_today_games)
+        f_pp          = ex.submit(pp_fetch)
+        f_ud          = ex.submit(ud_fetch)
+        f_odds        = ex.submit(fetch_all_odds_inmemory)
+        f_team_logs   = ex.submit(fetch_team_game_logs)
+        f_player_logs = ex.submit(fetch_player_game_logs)
+        games       = f_games.result()
+        pp_lines    = f_pp.result()
+        ud_lines    = f_ud.result()
+        odds        = f_odds.result()
+        team_logs   = f_team_logs.result()
+        player_logs = f_player_logs.result()
 
     # Derive combo stats for props model
-    if not player_logs.empty:
+    if not player_logs.empty and "pts" in player_logs.columns:
         player_logs["pra"]     = player_logs["pts"] + player_logs["reb"] + player_logs["ast"]
         player_logs["pts_reb"] = player_logs["pts"] + player_logs["reb"]
         player_logs["pts_ast"] = player_logs["pts"] + player_logs["ast"]
@@ -169,13 +185,6 @@ with st.sidebar:
 
 # ── Build picks ────────────────────────────────────────────────────────────────
 
-def _df_or_none(df):
-    """Return DataFrame if non-empty, else None (so models fall back to defaults)."""
-    try:
-        return df if (df is not None and not df.empty) else None
-    except Exception:
-        return None
-
 @st.cache_data(show_spinner=False)
 def load_picks_cloud(bankroll, unit_size, _cache_key):
     return build_picks(
@@ -184,9 +193,9 @@ def load_picks_cloud(bankroll, unit_size, _cache_key):
         unit_size=unit_size,
         lines_data=data["lines"],
         odds_data=data["odds"],
-        game_logs_df=_df_or_none(data.get("team_logs")),
-        player_logs_df=_df_or_none(data.get("player_logs")),
-        team_logs_df=_df_or_none(data.get("team_logs")),
+        game_logs_df=data.get("team_logs"),
+        player_logs_df=data.get("player_logs"),
+        team_logs_df=data.get("team_logs"),
     )
 
 try:

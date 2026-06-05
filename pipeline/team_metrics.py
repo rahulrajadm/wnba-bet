@@ -30,6 +30,8 @@ def _find_team(team_name: str, df: pd.DataFrame, col: str = "team_name") -> pd.D
 def get_rest_days(team_name: str, game_logs_df: pd.DataFrame | None = None) -> float:
     """Days since this team last played. Defaults to 2.5 if unknown."""
     if game_logs_df is not None:
+        if game_logs_df.empty or "team_name" not in game_logs_df.columns:
+            return 2.5
         team_rows = _find_team(team_name, game_logs_df)
         if team_rows.empty:
             return 2.5
@@ -57,6 +59,8 @@ def get_opp_pts_allowed(team_name: str, n: int = RECENT_N, game_logs_df: pd.Data
     Computed by joining game_logs: find the opponent's pts in each of this team's games.
     """
     if game_logs_df is not None:
+        if game_logs_df.empty or "team_name" not in game_logs_df.columns:
+            return LEAGUE_AVG_TEAM_PTS
         team_rows = _find_team(team_name, game_logs_df).sort_values("game_date", ascending=False).head(n)
         if team_rows.empty:
             return LEAGUE_AVG_TEAM_PTS
@@ -92,6 +96,8 @@ def get_pace_factor(team_name: str, n: int = RECENT_N, game_logs_df: pd.DataFram
     < 1.0 = slow pace, fewer possessions.
     """
     if game_logs_df is not None:
+        if game_logs_df.empty or "team_name" not in game_logs_df.columns:
+            return 1.0
         team_rows = _find_team(team_name, game_logs_df).sort_values("game_date", ascending=False).head(n)
         if team_rows.empty:
             return 1.0

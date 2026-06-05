@@ -7,14 +7,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, date
 from zoneinfo import ZoneInfo
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), "../.env"))
 
-from pipeline.schedule import fetch_today_games
 from pipeline.prizepicks import fetch_wnba_lines as pp_fetch
 from pipeline.underdog import fetch_wnba_lines as ud_fetch
 from pipeline.cloud_data import fetch_team_game_logs, fetch_player_game_logs
@@ -28,17 +27,23 @@ st.set_page_config(page_title="WNBA Bet", page_icon="🏀", layout="wide", initi
 
 # ── In-memory data loading ─────────────────────────────────────────────────────
 
-def fetch_all_odds_inmemory() -> list[dict]:
-    """Fetch WNBA odds for all markets in a single API call."""
+def fetch_odds_and_schedule() -> tuple[list[dict], list[dict]]:
+    """
+    Single Odds API call (3 credits: h2h + spreads + totals).
+    Returns (odds_rows, games) — schedule is derived for free from the same response.
+    """
     import requests
-    from datetime import timezone
+    from datetime import timezone, timedelta
 
     api_key = os.getenv("ODDS_API_KEY")
     if not api_key:
-        return []
+        return [], []
 
     fetched_at = datetime.now(timezone.utc).isoformat()
-    rows = []
+    today      = date.today().isoformat()
+    tomorrow   = (date.today() + timedelta(days=1)).isoformat()
+    rows, seen_games = [], {}
+
     try:
         resp = requests.get(
             "https://api.the-odds-api.com/v4/sports/basketball_wnba/odds",
@@ -53,9 +58,20 @@ def fetch_all_odds_inmemory() -> list[dict]:
         )
         resp.raise_for_status()
         for game in resp.json():
-            game_id   = game["id"]
-            home_team = game["home_team"]
-            away_team = game["away_team"]
+            game_id    = game["id"]
+            home_team  = game["home_team"]
+            away_team  = game["away_team"]
+            game_date  = game.get("commence_time", "")[:10]
+
+            # Collect unique games for the schedule (today + tomorrow)
+            if game_id not in seen_games and game_date in (today, tomorrow):
+                seen_games[game_id] = {
+                    "game_id": game_id, "date": game_date,
+                    "home_team": home_team, "away_team": away_team,
+                    "home_team_id": "", "away_team_id": "",
+                    "game_time": game.get("commence_time", ""), "season": "2026",
+                }
+
             for bm in game.get("bookmakers", []):
                 book = bm["key"]
                 mkts = {m["key"]: m for m in bm.get("markets", [])}
@@ -69,7 +85,6 @@ def fetch_all_odds_inmemory() -> list[dict]:
                                  "away_odds": outcomes.get(away_team, {}).get("price"),
                                  "home_spread": None, "away_spread": None,
                                  "over_odds": None, "under_odds": None, "total_line": None})
-
                 if "spreads" in mkts:
                     outcomes = {o["name"]: o for o in mkts["spreads"]["outcomes"]}
                     ho = outcomes.get(home_team, {}); ao = outcomes.get(away_team, {})
@@ -79,7 +94,6 @@ def fetch_all_odds_inmemory() -> list[dict]:
                                  "home_odds": ho.get("price"), "away_odds": ao.get("price"),
                                  "home_spread": ho.get("point"), "away_spread": ao.get("point"),
                                  "over_odds": None, "under_odds": None, "total_line": None})
-
                 if "totals" in mkts:
                     outcomes = {o["name"]: o for o in mkts["totals"]["outcomes"]}
                     ov = outcomes.get("Over", {}); un = outcomes.get("Under", {})
@@ -92,23 +106,23 @@ def fetch_all_odds_inmemory() -> list[dict]:
                                  "total_line": ov.get("point")})
     except Exception as e:
         st.warning(f"Odds fetch warning: {e}")
-    return rows
+
+    return rows, list(seen_games.values())
 
 
 @st.cache_data(show_spinner=False, ttl=14400)  # 4-hour TTL
 def load_all_data():
-    # Run all slow fetches in parallel
-    with ThreadPoolExecutor(max_workers=6) as ex:
-        f_games       = ex.submit(fetch_today_games)
+    # Odds API: single call for schedule + all markets (3 credits total, not 4)
+    odds, games = fetch_odds_and_schedule()
+
+    # Everything else in parallel (no Odds API calls)
+    with ThreadPoolExecutor(max_workers=4) as ex:
         f_pp          = ex.submit(pp_fetch)
         f_ud          = ex.submit(ud_fetch)
-        f_odds        = ex.submit(fetch_all_odds_inmemory)
         f_team_logs   = ex.submit(fetch_team_game_logs)
         f_player_logs = ex.submit(fetch_player_game_logs)
-        games       = f_games.result()
         pp_lines    = f_pp.result()
         ud_lines    = f_ud.result()
-        odds        = f_odds.result()
         team_logs   = f_team_logs.result()
         player_logs = f_player_logs.result()
 

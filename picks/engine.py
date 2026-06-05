@@ -38,14 +38,14 @@ def is_high_interest(pick: dict) -> bool:
     return True
 
 
-def build_game_picks(games: list[dict], bankroll: float, unit_size: float) -> list[dict]:
+def build_game_picks(games: list[dict], bankroll: float, unit_size: float, odds_data: list[dict] | None = None) -> list[dict]:
     """Generate ML, spread, and totals picks for today's games."""
-    conn     = get_conn()
-    odds_df  = pd.read_sql(
-        "SELECT * FROM game_odds WHERE DATE(fetched_at) = DATE('now')",
-        conn
-    )
-    conn.close()
+    if odds_data is not None:
+        odds_df = pd.DataFrame(odds_data)
+    else:
+        conn    = get_conn()
+        odds_df = pd.read_sql("SELECT * FROM game_odds WHERE DATE(fetched_at) = DATE('now')", conn)
+        conn.close()
 
     picks = []
     for game in games:
@@ -285,8 +285,9 @@ def build_picks(
     bankroll: float = 500.0,
     unit_size: float = 10.0,
     lines_data=None,
+    odds_data=None,
 ) -> list[dict]:
-    game_picks = build_game_picks(games, bankroll, unit_size)
+    game_picks = build_game_picks(games, bankroll, unit_size, odds_data=odds_data)
     prop_picks = build_prop_picks(bankroll, unit_size, lines_data)
     all_picks  = game_picks + prop_picks
     all_picks.sort(

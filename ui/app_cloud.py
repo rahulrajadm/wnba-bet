@@ -169,6 +169,13 @@ with st.sidebar:
 
 # ── Build picks ────────────────────────────────────────────────────────────────
 
+def _df_or_none(df):
+    """Return DataFrame if non-empty, else None (so models fall back to defaults)."""
+    try:
+        return df if (df is not None and not df.empty) else None
+    except Exception:
+        return None
+
 @st.cache_data(show_spinner=False)
 def load_picks_cloud(bankroll, unit_size, _cache_key):
     return build_picks(
@@ -177,12 +184,16 @@ def load_picks_cloud(bankroll, unit_size, _cache_key):
         unit_size=unit_size,
         lines_data=data["lines"],
         odds_data=data["odds"],
-        game_logs_df=data["team_logs"],
-        player_logs_df=data["player_logs"],
-        team_logs_df=data["team_logs"],
+        game_logs_df=_df_or_none(data.get("team_logs")),
+        player_logs_df=_df_or_none(data.get("player_logs")),
+        team_logs_df=_df_or_none(data.get("team_logs")),
     )
 
-all_picks = load_picks_cloud(bankroll, unit_size, data["fetched_at"])
+try:
+    all_picks = load_picks_cloud(bankroll, unit_size, data["fetched_at"])
+except Exception as _e:
+    st.exception(_e)
+    all_picks = []
 
 min_rank = TIER_RANK[min_conf]
 filtered = [p for p in all_picks if TIER_RANK.get(p["confidence_tier"], 0) >= min_rank]

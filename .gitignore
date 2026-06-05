@@ -1,0 +1,9 @@
+.env
+data/wnba_bet.db
+*.xlsx
+*.xls
+*.csv
+__pycache__/
+*.pyc
+.DS_Store
+.streamlit/secrets.toml

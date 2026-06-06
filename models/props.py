@@ -181,6 +181,12 @@ def predict_props(
         if blended <= 0:
             continue
 
+        # Skip lines more than 2× the expected value — these produce trivially
+        # easy "Less" predictions (demon/elevated lines, or a stat the player
+        # rarely accumulates). Neither side of such a line is meaningful.
+        if line > blended * 2.0:
+            continue
+
         p_more = prob_over_line(blended, line, stat_col)
         p_less = 1.0 - p_more
 

@@ -21,21 +21,40 @@ MAX_PROB       = 0.88
 MIN_PROB       = 0.12
 DEFAULT_MULT   = 3.0   # 2-pick power play baseline for props
 
-NO_LESS_AT_HALF = {"3-PT Made", "3-Pointers Made", "Blocked Shots", "Steals"}
+# Minimum line value for a "Less" pick to be considered non-trivial.
+# Below these thresholds, "Less" is near-certain and has no betting value.
+LESS_MIN_LINE: dict[str, float] = {
+    "Points":           8.5,
+    "Rebounds":         4.5,
+    "Assists":          3.5,
+    "Steals":           1.5,
+    "Blocked Shots":    1.5,
+    "3-PT Made":        1.5,
+    "3-Pointers Made":  1.5,
+    "Turnovers":        2.5,
+    "Free Throws Made": 2.5,
+    "Pts+Rebs+Asts":   15.5,
+    "Pts+Rebs":        12.5,
+    "Pts+Asts":        12.5,
+    "Rebs+Asts":        6.5,
+    "Blks+Stls":        2.5,
+    "Fantasy Score":   18.5,
+}
 
 
 def is_platform_realistic(pick: dict) -> bool:
-    if pick.get("pick_type") == "prop":
-        if pick["direction"] == "Less" and pick["line"] == 0.5 and pick["stat_type"] in NO_LESS_AT_HALF:
+    """Return False for "Less" picks whose line is too low to be meaningful."""
+    if pick.get("pick_type") != "prop":
+        return True
+    if pick["direction"] == "Less":
+        min_line = LESS_MIN_LINE.get(pick["stat_type"], 1.5)
+        if pick["line"] < min_line:
             return False
     return True
 
 
 def is_high_interest(pick: dict) -> bool:
-    if pick.get("pick_type") == "game":
-        return True
-    if pick["direction"] == "Less" and pick["line"] <= 0.5:
-        return False
+    """Secondary display filter — primary filtering happens in is_platform_realistic."""
     return True
 
 

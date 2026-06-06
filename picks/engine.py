@@ -228,9 +228,9 @@ def build_game_picks(games: list[dict], bankroll: float, unit_size: float, odds_
     return picks
 
 
-def build_prop_picks(bankroll: float, unit_size: float, lines_data=None, player_logs_df=None, team_logs_df=None) -> list[dict]:
+def build_prop_picks(bankroll: float, unit_size: float, lines_data=None, player_logs_df=None, team_logs_df=None, games=None) -> list[dict]:
     """Generate player prop picks."""
-    raw   = predict_props(lines_data=lines_data, player_logs_df=player_logs_df, team_logs_df=team_logs_df)
+    raw   = predict_props(lines_data=lines_data, player_logs_df=player_logs_df, team_logs_df=team_logs_df, games=games)
     picks = []
 
     for pred in raw:
@@ -295,7 +295,7 @@ def build_picks(
     team_logs_df=None,
 ) -> list[dict]:
     game_picks = build_game_picks(games, bankroll, unit_size, odds_data=odds_data, game_logs_df=game_logs_df)
-    prop_picks = build_prop_picks(bankroll, unit_size, lines_data, player_logs_df=player_logs_df, team_logs_df=team_logs_df)
+    prop_picks = build_prop_picks(bankroll, unit_size, lines_data, player_logs_df=player_logs_df, team_logs_df=team_logs_df, games=games)
     all_picks  = game_picks + prop_picks
     all_picks.sort(
         key=lambda x: (TIER_RANK.get(x["confidence_tier"], 0), x["ev_per_100"]),

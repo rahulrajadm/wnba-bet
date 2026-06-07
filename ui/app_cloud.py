@@ -384,7 +384,16 @@ with tab2:
             home, away = g["home_team"], g["away_team"]
             g_picks = [p for p in game_picks if p["home_team"] == home]
 
-            with st.expander(f"**{away}** @ **{home}**", expanded=len(g_picks) > 0):
+            # Show tip-off time in CT so users can verify games are upcoming
+            try:
+                gt = datetime.fromisoformat(g["game_time"].replace("Z", "+00:00"))
+                gt_ct = gt.astimezone(ZoneInfo("America/Chicago"))
+                tip_label = gt_ct.strftime("%a %b %-d · %-I:%M %p CT")
+            except Exception:
+                tip_label = ""
+
+            header = f"**{away}** @ **{home}**" + (f"  ·  {tip_label}" if tip_label else "")
+            with st.expander(header, expanded=len(g_picks) > 0):
                 ml = [p for p in g_picks if p["market"] == "Moneyline"]
                 sp = [p for p in g_picks if p["market"] == "Spread"]
                 to = [p for p in g_picks if p["market"] == "Totals"]

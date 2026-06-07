@@ -7,7 +7,7 @@ import pandas as pd
 from nba_api.stats.endpoints import leaguegamelog, playergamelogs
 
 LEAGUE_ID = "10"
-SEASON    = "2025"
+SEASON    = "2026"
 TIMEOUT   = 30
 
 

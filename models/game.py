@@ -101,17 +101,15 @@ def predict_game(home_team: str, away_team: str, game_logs_df=None) -> dict | No
     if X is None:
         return None
 
-    # Moneyline
-    home_win_prob = float(ml_model.predict_proba(X)[0][1])
+    # Spread model is the single source of truth for all probabilities.
+    # Deriving win probability from pred_diff guarantees P(win by N+) ≤ P(win).
+    # Using a separate ML classifier for win prob caused the two numbers to
+    # contradict each other (e.g., 83% cover -2.5 but only 72% win outright).
+    SPREAD_STD = 12.0
+    pred_diff   = float(sprd_model.predict(X)[0])
+    home_win_prob = float(norm.cdf(pred_diff / SPREAD_STD))
     away_win_prob = 1.0 - home_win_prob
 
-    # Spread (predicted point differential)
-    pred_diff = float(sprd_model.predict(X)[0])
-    # P(home covers spread line) using normal distribution around predicted diff
-    # std dev based on historical WNBA game variance (~12 pts)
-    SPREAD_STD = 12.0
-
-    # Totals (predicted total points)
     pred_total = float(total_model.predict(X)[0])
     TOTALS_STD = 14.0
 

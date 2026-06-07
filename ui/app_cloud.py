@@ -41,15 +41,14 @@ def fetch_odds_and_schedule() -> tuple[list[dict], list[dict]]:
     Returns (odds_rows, games) — schedule is derived for free from the same response.
     """
     import requests
-    from datetime import timezone, timedelta
+    from datetime import timezone
 
     api_key = os.getenv("ODDS_API_KEY")
     if not api_key:
         return [], []
 
     fetched_at = datetime.now(timezone.utc).isoformat()
-    today      = date.today().isoformat()
-    tomorrow   = (date.today() + timedelta(days=1)).isoformat()
+    now_utc    = datetime.now(timezone.utc)
     rows, seen_games = [], {}
 
     try:
@@ -69,15 +68,27 @@ def fetch_odds_and_schedule() -> tuple[list[dict], list[dict]]:
             game_id    = game["id"]
             home_team  = game["home_team"]
             away_team  = game["away_team"]
-            game_date  = game.get("commence_time", "")[:10]
+            commence   = game.get("commence_time", "")
 
-            # Collect unique games for the schedule (today + tomorrow)
-            if game_id not in seen_games and game_date in (today, tomorrow):
+            # Parse full datetime to avoid UTC/US-timezone date mismatch:
+            # date[:10] can give the wrong calendar day for evening US games.
+            try:
+                game_dt = datetime.fromisoformat(commence.replace("Z", "+00:00"))
+            except Exception:
+                continue
+
+            # Only include games that haven't started yet
+            if game_dt <= now_utc:
+                continue
+
+            game_date = game_dt.strftime("%Y-%m-%d")
+
+            if game_id not in seen_games:
                 seen_games[game_id] = {
                     "game_id": game_id, "date": game_date,
                     "home_team": home_team, "away_team": away_team,
                     "home_team_id": "", "away_team_id": "",
-                    "game_time": game.get("commence_time", ""), "season": "2026",
+                    "game_time": commence, "season": "2026",
                 }
 
             for bm in game.get("bookmakers", []):

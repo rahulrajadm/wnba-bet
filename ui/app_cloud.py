@@ -204,8 +204,13 @@ with st.sidebar:
             correct = st.secrets.get("REFRESH_CODE", "")
             if code == correct and correct != "":
                 with st.spinner("Fetching data…"):
-                    st.session_state.app_data = load_all_data()
-                st.rerun()
+                    fresh = load_all_data()
+                if fresh["games"]:
+                    st.session_state.app_data = fresh
+                    st.rerun()
+                else:
+                    st.warning("No upcoming games found — Odds API has no lines posted yet. "
+                               "Keeping existing data. Try again later.")
             else:
                 st.error("Invalid passcode")
 

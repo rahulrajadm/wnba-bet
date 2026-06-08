@@ -148,6 +148,11 @@ def predict_props(
         player_name = row["player_name"]
         line        = float(row["line"])
 
+        # Multi-player combo props (e.g. "Clark + Stewart Points") require summing
+        # two players' expected values — the single-player model can't evaluate them.
+        if " + " in player_name or " & " in player_name:
+            continue
+
         season_rate = get_player_season_rate(player_name, stat_col, logs)
         if season_rate is None or season_rate < 0:
             continue

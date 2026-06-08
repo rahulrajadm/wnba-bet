@@ -25,6 +25,7 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "../.env"))
 from pipeline.prizepicks import fetch_wnba_lines as pp_fetch
 from pipeline.underdog import fetch_wnba_lines as ud_fetch
 from pipeline.cloud_data import fetch_team_game_logs, fetch_player_game_logs
+from pipeline.injuries import fetch_injury_flags
 from picks.engine import build_picks, best_props_per_player, is_high_interest
 from analysis.confidence import TIER_COLORS, TIER_RANK
 from analysis.risk import RISK_COLORS
@@ -133,6 +134,13 @@ def load_all_data():
     # Odds API: single call for schedule + all markets (3 credits total, not 4)
     odds, games = fetch_odds_and_schedule()
 
+    # Injury flags: fetch now that we know which teams are playing today
+    team_names = list({g["home_team"] for g in games} | {g["away_team"] for g in games})
+    try:
+        injuries = fetch_injury_flags(team_names)
+    except Exception:
+        injuries = {}
+
     # Everything else in parallel (no Odds API calls)
     with ThreadPoolExecutor(max_workers=4) as ex:
         f_pp          = ex.submit(pp_fetch)
@@ -141,7 +149,6 @@ def load_all_data():
         f_player_logs = ex.submit(fetch_player_game_logs)
         pp_lines    = f_pp.result(timeout=20)
         ud_lines    = f_ud.result(timeout=20)
-        # NBA Stats API: 45s to allow for season-fallback (two sequential calls)
         try:
             team_logs = f_team_logs.result(timeout=45)
         except Exception:
@@ -178,6 +185,7 @@ def load_all_data():
         "odds":        odds,
         "team_logs":   team_logs,
         "player_logs": player_logs,
+        "injuries":    injuries,
         "fetched_at":  datetime.now(ZoneInfo("America/Chicago")).strftime("%b %d %Y, %I:%M %p"),
     }
 
@@ -411,8 +419,24 @@ with tab2:
             except Exception:
                 tip_label = ""
 
-            header = f"**{away}** @ **{home}**" + (f"  ·  {tip_label}" if tip_label else "")
+            injuries    = data.get("injuries", {})
+            home_flags  = injuries.get(home, [])
+            away_flags  = injuries.get(away, [])
+            has_injury  = bool(home_flags or away_flags)
+
+            # Append injury indicator to expander header
+            inj_badge = "  ·  ⚠️ injury alert" if has_injury else ""
+            header = f"**{away}** @ **{home}**" + (f"  ·  {tip_label}" if tip_label else "") + inj_badge
             with st.expander(header, expanded=len(g_picks) > 0):
+                # Injury alerts
+                if has_injury:
+                    parts = []
+                    for flag in away_flags:
+                        parts.append(f"{flag['name']} ({away}) — {flag['status']}")
+                    for flag in home_flags:
+                        parts.append(f"{flag['name']} ({home}) — {flag['status']}")
+                    st.warning("⚠️ " + "  ·  ".join(parts))
+
                 ml = [p for p in g_picks if p["market"] == "Moneyline"]
                 sp = [p for p in g_picks if p["market"] == "Spread"]
                 to = [p for p in g_picks if p["market"] == "Totals"]

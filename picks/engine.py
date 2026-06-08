@@ -41,13 +41,37 @@ LESS_MIN_LINE: dict[str, float] = {
     "Fantasy Score":   18.5,
 }
 
+# Minimum line for a "More" pick to be non-trivial.
+# Below these thresholds, "More" is near-certain (goblin/lowered line territory).
+MORE_MIN_LINE: dict[str, float] = {
+    "Points":           8.5,
+    "Rebounds":         2.5,
+    "Assists":          1.5,
+    "Steals":           0.5,
+    "Blocked Shots":    0.5,
+    "3-PT Made":        0.5,
+    "3-Pointers Made":  0.5,
+    "Turnovers":        1.5,
+    "Free Throws Made": 1.5,
+    "Pts+Rebs+Asts":   10.5,
+    "Pts+Rebs":         9.5,
+    "Pts+Asts":         9.5,
+    "Rebs+Asts":        3.5,
+    "Blks+Stls":        1.5,
+    "Fantasy Score":   12.5,
+}
+
 
 def is_platform_realistic(pick: dict) -> bool:
-    """Return False for "Less" picks whose line is too low to be meaningful."""
+    """Return False for picks whose line is too trivial to have betting value."""
     if pick.get("pick_type") != "prop":
         return True
     if pick["direction"] == "Less":
         min_line = LESS_MIN_LINE.get(pick["stat_type"], 1.5)
+        if pick["line"] < min_line:
+            return False
+    elif pick["direction"] == "More":
+        min_line = MORE_MIN_LINE.get(pick["stat_type"], 0.5)
         if pick["line"] < min_line:
             return False
     return True

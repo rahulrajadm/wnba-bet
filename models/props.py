@@ -181,10 +181,12 @@ def predict_props(
         if blended <= 0:
             continue
 
-        # Skip lines more than 2× the expected value — these produce trivially
-        # easy "Less" predictions (demon/elevated lines, or a stat the player
-        # rarely accumulates). Neither side of such a line is meaningful.
-        if line > blended * 2.0:
+        # Skip lines outside the range [0.5×, 2.0×] of the blended expectation.
+        # Above 2×: trivially easy "Less" (elevated / demon line territory).
+        # Below 0.5×: trivially easy "More" (goblin / lowered line territory).
+        # The demon/goblin direction filter catches platform-tagged cases;
+        # this range filter is the safety net for untagged or standard lines.
+        if line > blended * 2.0 or line < blended * 0.5:
             continue
 
         p_more = prob_over_line(blended, line, stat_col)

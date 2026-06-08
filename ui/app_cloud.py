@@ -129,7 +129,6 @@ def fetch_odds_and_schedule() -> tuple[list[dict], list[dict]]:
     return rows, list(seen_games.values())
 
 
-@st.cache_data(show_spinner=False, ttl=14400)  # 4-hour TTL
 def load_all_data():
     # Odds API: single call for schedule + all markets (3 credits total, not 4)
     odds, games = fetch_odds_and_schedule()
@@ -183,6 +182,11 @@ def load_all_data():
     }
 
 
+# ── Session state ──────────────────────────────────────────────────────────────
+
+if "app_data" not in st.session_state:
+    st.session_state.app_data = None
+
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 
 with st.sidebar:
@@ -199,24 +203,20 @@ with st.sidebar:
         if st.button("Refresh All Data", use_container_width=True):
             correct = st.secrets.get("REFRESH_CODE", "")
             if code == correct and correct != "":
-                st.cache_data.clear()
-                st.success("Cache cleared — reloading…")
+                with st.spinner("Fetching data…"):
+                    st.session_state.app_data = load_all_data()
                 st.rerun()
             else:
                 st.error("Invalid passcode")
 
-    # Data is loaded after this point — timestamp shown in second sidebar block
-    st.divider()
-    min_conf  = st.selectbox("Min Confidence", ["LOW", "MEDIUM", "HIGH", "STRONG"], index=1)
-    platforms = st.multiselect("Prop Platforms", ["prizepicks", "underdog"], default=["prizepicks", "underdog"])
-    show_game = st.toggle("Show game picks", value=True)
-    show_prop = st.toggle("Show player props", value=True)
 
+# ── Gate: nothing runs until the user explicitly refreshes ────────────────────
 
-# ── Load data ──────────────────────────────────────────────────────────────────
+data = st.session_state.app_data
 
-with st.spinner("Loading today's picks…"):
-    data = load_all_data()
+if data is None:
+    st.info("No data loaded. Enter your passcode in the sidebar and press **Refresh All Data**.")
+    st.stop()
 
 with st.sidebar:
     st.caption(f"🕐 Last updated: **{data['fetched_at']}** CT")
@@ -229,6 +229,11 @@ with st.sidebar:
         f"Team logs: {len(tl) if tl is not None and not tl.empty else 0} rows · "
         f"Player logs: {len(pl) if pl is not None and not pl.empty else 0} rows"
     )
+    st.divider()
+    min_conf  = st.selectbox("Min Confidence", ["LOW", "MEDIUM", "HIGH", "STRONG"], index=1)
+    platforms = st.multiselect("Prop Platforms", ["prizepicks", "underdog"], default=["prizepicks", "underdog"])
+    show_game = st.toggle("Show game picks", value=True)
+    show_prop = st.toggle("Show player props", value=True)
 
 
 # ── Build picks ────────────────────────────────────────────────────────────────

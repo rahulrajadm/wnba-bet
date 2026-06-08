@@ -45,29 +45,39 @@ def fetch_team_game_logs(season: str = SEASON) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+def _fetch_player_game_logs_for_season(season: str) -> pd.DataFrame:
+    logs = playergamelogs.PlayerGameLogs(
+        league_id_nullable=LEAGUE_ID,
+        season_nullable=season,
+        season_type_nullable="Regular Season",
+        timeout=TIMEOUT,
+    )
+    df = logs.get_data_frames()[0]
+    df["season"] = season
+    df.rename(columns={
+        "PLAYER_ID": "player_id", "PLAYER_NAME": "player_name",
+        "TEAM_ABBREVIATION": "team_abbr", "GAME_ID": "game_id",
+        "GAME_DATE": "game_date", "MATCHUP": "matchup", "WL": "wl",
+        "MIN": "min", "PTS": "pts", "REB": "reb", "AST": "ast",
+        "STL": "stl", "BLK": "blk", "TOV": "tov", "FG3M": "fg3m",
+        "FGM": "fgm", "FGA": "fga", "FG_PCT": "fg_pct",
+        "FTM": "ftm", "FTA": "fta", "PLUS_MINUS": "plus_minus",
+    }, inplace=True)
+    keep = ["season", "player_id", "player_name", "team_abbr", "game_id",
+            "game_date", "matchup", "wl", "min", "pts", "reb", "ast",
+            "stl", "blk", "tov", "fg3m", "fgm", "fga", "fg_pct",
+            "ftm", "fta", "plus_minus"]
+    return df[[c for c in keep if c in df.columns]]
+
+
 def fetch_player_game_logs(season: str = SEASON) -> pd.DataFrame:
-    try:
-        logs = playergamelogs.PlayerGameLogs(
-            league_id_nullable=LEAGUE_ID,
-            season_nullable=season,
-            season_type_nullable="Regular Season",
-            timeout=TIMEOUT,
-        )
-        df = logs.get_data_frames()[0]
-        df["season"] = season
-        df.rename(columns={
-            "PLAYER_ID": "player_id", "PLAYER_NAME": "player_name",
-            "TEAM_ABBREVIATION": "team_abbr", "GAME_ID": "game_id",
-            "GAME_DATE": "game_date", "MATCHUP": "matchup", "WL": "wl",
-            "MIN": "min", "PTS": "pts", "REB": "reb", "AST": "ast",
-            "STL": "stl", "BLK": "blk", "TOV": "tov", "FG3M": "fg3m",
-            "FGM": "fgm", "FGA": "fga", "FG_PCT": "fg_pct",
-            "FTM": "ftm", "FTA": "fta", "PLUS_MINUS": "plus_minus",
-        }, inplace=True)
-        keep = ["season", "player_id", "player_name", "team_abbr", "game_id",
-                "game_date", "matchup", "wl", "min", "pts", "reb", "ast",
-                "stl", "blk", "tov", "fg3m", "fgm", "fga", "fg_pct",
-                "ftm", "fta", "plus_minus"]
-        return df[[c for c in keep if c in df.columns]]
-    except Exception:
-        return pd.DataFrame()
+    # PlayerGameLogs sometimes doesn't index the new season immediately.
+    # Fall back to the prior season so props always have data.
+    for s in [season, str(int(season) - 1)]:
+        try:
+            df = _fetch_player_game_logs_for_season(s)
+            if not df.empty:
+                return df
+        except Exception:
+            continue
+    return pd.DataFrame()

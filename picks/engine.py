@@ -17,8 +17,8 @@ from analysis.risk import get_risk_profile
 from analysis.kelly import kelly_stake, stake_dollars, risk_reward
 
 MIN_EDGE       = 0.04
-MAX_PROB       = 0.88
-MIN_PROB       = 0.12
+MAX_PROB       = 0.92
+MIN_PROB       = 0.08
 DEFAULT_MULT   = 3.0   # 2-pick power play baseline for props
 
 # Minimum line value for a "Less" pick to be considered non-trivial.

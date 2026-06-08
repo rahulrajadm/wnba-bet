@@ -35,16 +35,27 @@ def fetch_wnba_lines() -> list[dict]:
         pid      = rel.get("new_player", {}).get("data", {}).get("id")
         pinfo    = included.get(pid, {}).get("attributes", {}) if pid else {}
 
+        # odds_type controls which directions are available on this line:
+        # "standard" → both More and Less, "demon" → More only, "goblin" → Less only
+        odds_type = attrs.get("odds_type", "standard")
+        if odds_type == "demon":
+            allowed = "More"
+        elif odds_type == "goblin":
+            allowed = "Less"
+        else:
+            allowed = None   # both directions available
+
         props.append({
-            "platform":    "prizepicks",
-            "fetched_at":  datetime.now(timezone.utc).isoformat(),
-            "player_name": pinfo.get("display_name", attrs.get("description", "")),
-            "player_team": pinfo.get("team", ""),
-            "stat_type":   attrs.get("stat_type", ""),
-            "line":        attrs.get("line_score"),
-            "game_id":     attrs.get("game_id", ""),
-            "more_odds":   None,
-            "less_odds":   None,
+            "platform":          "prizepicks",
+            "fetched_at":        datetime.now(timezone.utc).isoformat(),
+            "player_name":       pinfo.get("display_name", attrs.get("description", "")),
+            "player_team":       pinfo.get("team", ""),
+            "stat_type":         attrs.get("stat_type", ""),
+            "line":              attrs.get("line_score"),
+            "game_id":           attrs.get("game_id", ""),
+            "allowed_direction": allowed,
+            "more_odds":         None,
+            "less_odds":         None,
         })
     return props
 

@@ -37,16 +37,31 @@ def fetch_wnba_lines() -> list[dict]:
         stat      = line.get("over_under", {}).get("appearance_stat", {}).get("display_stat", "")
         ou_line   = line.get("stat_value")
 
+        # "balanced" lines have both higher and lower options.
+        # "alternate" lines have only one direction — read it from options[].choice.
+        line_type = line.get("line_type", "balanced")
+        if line_type == "alternate":
+            choices = [o.get("choice", "") for o in line.get("options", [])]
+            if choices == ["higher"]:
+                allowed = "More"
+            elif choices == ["lower"]:
+                allowed = "Less"
+            else:
+                allowed = None
+        else:
+            allowed = None   # balanced: both directions available
+
         props.append({
-            "platform":    "underdog",
-            "fetched_at":  datetime.now(timezone.utc).isoformat(),
-            "player_name": f"{player.get('first_name', '')} {player.get('last_name', '')}".strip(),
-            "player_team": appearance.get("team_id", ""),
-            "stat_type":   stat,
-            "line":        float(ou_line) if ou_line is not None else None,
-            "game_id":     str(match_id),
-            "more_odds":   None,
-            "less_odds":   None,
+            "platform":          "underdog",
+            "fetched_at":        datetime.now(timezone.utc).isoformat(),
+            "player_name":       f"{player.get('first_name', '')} {player.get('last_name', '')}".strip(),
+            "player_team":       appearance.get("team_id", ""),
+            "stat_type":         stat,
+            "line":              float(ou_line) if ou_line is not None else None,
+            "game_id":           str(match_id),
+            "allowed_direction": allowed,
+            "more_odds":         None,
+            "less_odds":         None,
         })
     return props
 

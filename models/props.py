@@ -198,6 +198,13 @@ def predict_props(
         if edge <= 0:
             continue
 
+        # Skip if this line only supports one direction and the model disagrees.
+        # Demon lines (elevated) are More-only; goblin lines are Less-only.
+        # Recommending the unavailable direction is misleading and unbettable.
+        allowed = row.get("allowed_direction")
+        if allowed and direction != allowed:
+            continue
+
         predictions.append({
             "platform":      row["platform"],
             "player_name":   player_name,

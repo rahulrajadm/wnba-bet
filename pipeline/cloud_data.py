@@ -8,9 +8,10 @@ import requests
 from datetime import date, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-TIMEOUT   = 15
-LOOKBACK  = 35    # days back to collect completed games
-WORKERS   = 10    # parallel box-score requests
+TIMEOUT          = 15
+LOOKBACK         = 35   # days for team logs — current-season form only
+PLAYER_SEASONS   = 2    # calendar years of player data (current + N-1 prior seasons)
+WORKERS          = 10   # parallel box-score requests
 
 _HEADERS = {
     "User-Agent": (
@@ -33,9 +34,10 @@ def _get(url: str, params: dict | None = None) -> dict:
     return r.json()
 
 
-def _completed_game_ids() -> list[str]:
+def _completed_game_ids(lookback: int = LOOKBACK) -> list[str]:
+    """Completed game IDs from the last `lookback` days (single range query)."""
     end   = date.today()
-    start = end - timedelta(days=LOOKBACK)
+    start = end - timedelta(days=lookback)
     data  = _get(
         "https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/scoreboard",
         {"dates": f"{start.strftime('%Y%m%d')}-{end.strftime('%Y%m%d')}"},
@@ -45,6 +47,33 @@ def _completed_game_ids() -> list[str]:
         if e.get("competitions", [{}])[0]
             .get("status", {}).get("type", {}).get("completed")
     ]
+
+
+def _completed_game_ids_multiseason(num_seasons: int = PLAYER_SEASONS) -> list[str]:
+    """
+    Completed game IDs spanning the current and prior calendar years.
+    ESPN rejects cross-year date ranges, so each year is queried separately.
+    """
+    current_year = date.today().year
+    seen: set[str] = set()
+    ids: list[str] = []
+
+    for yr in range(current_year - num_seasons + 1, current_year + 1):
+        try:
+            data = _get(
+                "https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/scoreboard",
+                {"dates": f"{yr}0101-{yr}1231"},
+            )
+            for e in data.get("events", []):
+                if e.get("competitions", [{}])[0].get("status", {}).get("type", {}).get("completed"):
+                    gid = e["id"]
+                    if gid not in seen:
+                        seen.add(gid)
+                        ids.append(gid)
+        except Exception:
+            pass
+
+    return ids
 
 
 def _box_score_team_rows(event_id: str) -> list[dict]:
@@ -197,9 +226,8 @@ def _box_score_player_rows(event_id: str) -> list[dict]:
     return rows
 
 
-def _fetch_all(parse_fn) -> pd.DataFrame:
+def _fetch_all(game_ids: list[str], parse_fn) -> pd.DataFrame:
     try:
-        game_ids = _completed_game_ids()
         all_rows = []
         with ThreadPoolExecutor(max_workers=WORKERS) as ex:
             futures = {ex.submit(parse_fn, gid): gid for gid in game_ids}
@@ -214,8 +242,13 @@ def _fetch_all(parse_fn) -> pd.DataFrame:
 
 
 def fetch_team_game_logs(season: str = str(date.today().year)) -> pd.DataFrame:
-    return _fetch_all(_box_score_team_rows)
+    """Current-season rolling form only (LOOKBACK days). Used by game prediction model."""
+    return _fetch_all(_completed_game_ids(lookback=LOOKBACK), _box_score_team_rows)
 
 
 def fetch_player_game_logs(season: str = str(date.today().year)) -> pd.DataFrame:
-    return _fetch_all(_box_score_player_rows)
+    """Multi-season player history (PLAYER_SEASONS years). Used by props model.
+    Covers the full prior season + current season for a stable baseline average,
+    while team logs remain current-season only so game predictions aren't polluted.
+    """
+    return _fetch_all(_completed_game_ids_multiseason(PLAYER_SEASONS), _box_score_player_rows)

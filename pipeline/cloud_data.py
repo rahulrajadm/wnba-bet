@@ -1,112 +1,221 @@
 """
-Fetch WNBA team and player game logs in-memory from NBA Stats API.
-Used by the Streamlit Cloud app (no SQLite).
+Fetch WNBA game logs from the ESPN unofficial API.
+Replaces stats.nba.com (unreliable on cloud IPs). No API key required.
+Covers all teams including 2026 expansion franchises.
 """
 import pandas as pd
 import requests
+from datetime import date, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-LEAGUE_ID = "10"
-SEASON    = "2026"
-TIMEOUT   = 30
+TIMEOUT   = 15
+LOOKBACK  = 35    # days back to collect completed games
+WORKERS   = 10    # parallel box-score requests
 
-# stats.nba.com blocks requests without browser-like headers on cloud IPs
 _HEADERS = {
-    "Accept":               "*/*",
-    "Accept-Language":      "en-US,en;q=0.9",
-    "Host":                 "stats.nba.com",
-    "Origin":               "https://www.nba.com",
-    "Referer":              "https://www.nba.com/",
-    "User-Agent":           (
+    "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/125.0.0.0 Safari/537.36"
     ),
-    "x-nba-stats-origin":   "stats",
-    "x-nba-stats-token":    "true",
+    "Accept": "application/json",
+}
+
+_LABEL_MAP = {
+    "PTS": "pts", "REB": "reb", "AST": "ast",
+    "STL": "stl", "BLK": "blk", "TO": "tov",
 }
 
 
-def _get(url: str, params: dict) -> dict:
-    resp = requests.get(url, headers=_HEADERS, params=params, timeout=TIMEOUT)
-    resp.raise_for_status()
-    return resp.json()
+def _get(url: str, params: dict | None = None) -> dict:
+    r = requests.get(url, headers=_HEADERS, params=params or {}, timeout=TIMEOUT)
+    r.raise_for_status()
+    return r.json()
 
 
-def fetch_team_game_logs(season: str = SEASON) -> pd.DataFrame:
+def _completed_game_ids() -> list[str]:
+    end   = date.today()
+    start = end - timedelta(days=LOOKBACK)
+    data  = _get(
+        "https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/scoreboard",
+        {"dates": f"{start.strftime('%Y%m%d')}-{end.strftime('%Y%m%d')}"},
+    )
+    return [
+        e["id"] for e in data.get("events", [])
+        if e.get("competitions", [{}])[0]
+            .get("status", {}).get("type", {}).get("completed")
+    ]
+
+
+def _box_score_team_rows(event_id: str) -> list[dict]:
+    data = _get(
+        "https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/summary",
+        {"event": event_id},
+    )
+    header = data.get("header", {}).get("competitions", [{}])[0]
+    game_date = header.get("date", "")[:10]
+
+    # Score by team_id from the header competitors
+    scores = {}
+    for c in header.get("competitors", []):
+        tid = str(c.get("team", {}).get("id", ""))
+        try:
+            scores[tid] = float(c.get("score", 0) or 0)
+        except (ValueError, TypeError):
+            scores[tid] = 0.0
+
+    rows = []
+    for team_entry in data.get("boxscore", {}).get("players", []):
+        team     = team_entry.get("team", {})
+        team_id  = str(team.get("id", ""))
+        groups   = team_entry.get("statistics", [])
+        if not groups:
+            continue
+        labels   = groups[0].get("labels", [])
+        athletes = groups[0].get("athletes", [])
+
+        # Aggregate counting stats across all players on this team
+        agg = {col: 0.0 for col in _LABEL_MAP.values()}
+        fgm = fga = fg3m = fg3a = 0.0
+
+        for ae in athletes:
+            raw = ae.get("stats", [])
+            if not raw or set(raw) == {"--"}:
+                continue
+            for lbl, col in _LABEL_MAP.items():
+                if lbl in labels:
+                    try:
+                        agg[col] += float(raw[labels.index(lbl)])
+                    except (ValueError, TypeError):
+                        pass
+            if "FG" in labels:
+                try:
+                    m, a = raw[labels.index("FG")].split("-")
+                    fgm += float(m); fga += float(a)
+                except Exception:
+                    pass
+            if "3PT" in labels:
+                try:
+                    m, a = raw[labels.index("3PT")].split("-")
+                    fg3m += float(m); fg3a += float(a)
+                except Exception:
+                    pass
+
+        pts = scores.get(team_id, agg["pts"])
+        rows.append({
+            "game_id":    event_id,
+            "season":     str(date.today().year),
+            "team_id":    team_id,
+            "team_name":  team.get("displayName", ""),
+            "team_abbr":  team.get("abbreviation", ""),
+            "game_date":  game_date,
+            "wl":         "",   # filled after both teams are known
+            "pts":        pts,
+            "fg_pct":     round(fgm / fga, 3) if fga > 0 else 0.0,
+            "fg3_pct":    round(fg3m / fg3a, 3) if fg3a > 0 else 0.0,
+            "ft_pct":     0.0,
+            "reb":        agg["reb"],
+            "ast":        agg["ast"],
+            "stl":        agg["stl"],
+            "blk":        agg["blk"],
+            "tov":        agg["tov"],
+            "plus_minus": 0.0,
+        })
+
+    # Assign W / L
+    if len(rows) == 2:
+        rows[0]["wl"] = "W" if rows[0]["pts"] > rows[1]["pts"] else "L"
+        rows[1]["wl"] = "W" if rows[1]["pts"] > rows[0]["pts"] else "L"
+
+    return rows
+
+
+def _box_score_player_rows(event_id: str) -> list[dict]:
+    data = _get(
+        "https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/summary",
+        {"event": event_id},
+    )
+    header    = data.get("header", {}).get("competitions", [{}])[0]
+    game_date = header.get("date", "")[:10]
+    rows = []
+
+    for team_entry in data.get("boxscore", {}).get("players", []):
+        team     = team_entry.get("team", {})
+        team_abbr = team.get("abbreviation", "")
+        groups   = team_entry.get("statistics", [])
+        if not groups:
+            continue
+        labels   = groups[0].get("labels", [])
+
+        for ae in groups[0].get("athletes", []):
+            athlete = ae.get("athlete", {})
+            raw     = ae.get("stats", [])
+            if not raw or set(raw) == {"--"}:
+                continue
+
+            row = {
+                "game_id":     event_id,
+                "game_date":   game_date,
+                "player_id":   str(athlete.get("id", "")),
+                "player_name": athlete.get("displayName", ""),
+                "team_abbr":   team_abbr,
+                "pts": 0.0, "reb": 0.0, "ast": 0.0,
+                "stl": 0.0, "blk": 0.0, "tov": 0.0,
+                "fg3m": 0.0, "fgm": 0.0, "fga": 0.0,
+                "fg_pct": 0.0, "ftm": 0.0, "plus_minus": 0.0,
+            }
+            for lbl, col in _LABEL_MAP.items():
+                if lbl in labels:
+                    try:
+                        row[col] = float(raw[labels.index(lbl)])
+                    except (ValueError, TypeError):
+                        pass
+            if "FG" in labels:
+                try:
+                    m, a = raw[labels.index("FG")].split("-")
+                    row["fgm"] = float(m); row["fga"] = float(a)
+                    row["fg_pct"] = round(float(m) / float(a), 3) if float(a) > 0 else 0.0
+                except Exception:
+                    pass
+            if "3PT" in labels:
+                try:
+                    row["fg3m"] = float(raw[labels.index("3PT")].split("-")[0])
+                except (ValueError, TypeError):
+                    pass
+            if "FT" in labels:
+                try:
+                    row["ftm"] = float(raw[labels.index("FT")].split("-")[0])
+                except (ValueError, TypeError):
+                    pass
+            if "+/-" in labels:
+                try:
+                    row["plus_minus"] = float(raw[labels.index("+/-")])
+                except (ValueError, TypeError):
+                    pass
+            rows.append(row)
+
+    return rows
+
+
+def _fetch_all(parse_fn) -> pd.DataFrame:
     try:
-        data = _get(
-            "https://stats.nba.com/stats/leaguegamelog",
-            {
-                "Counter": "0", "DateFrom": "", "DateTo": "",
-                "Direction": "DESC", "LeagueID": LEAGUE_ID,
-                "PlayerOrTeam": "T", "Season": season,
-                "SeasonType": "Regular Season", "Sorter": "DATE",
-            },
-        )
-        rs   = data["resultSets"][0]
-        cols = [c.lower() for c in rs["headers"]]
-        df   = pd.DataFrame(rs["rowSet"], columns=cols)
-        if df.empty:
-            return pd.DataFrame()
-        rename = {
-            "game_id": "game_id", "team_id": "team_id",
-            "team_name": "team_name", "team_abbreviation": "team_abbr",
-            "game_date": "game_date", "matchup": "matchup", "wl": "wl",
-            "pts": "pts", "fg_pct": "fg_pct", "fg3_pct": "fg3_pct",
-            "ft_pct": "ft_pct", "reb": "reb", "ast": "ast",
-            "stl": "stl", "blk": "blk", "tov": "tov",
-            "plus_minus": "plus_minus",
-        }
-        keep = [c for c in rename if c in df.columns]
-        df   = df[keep].rename(columns=rename)
-        df["team_id"] = df["team_id"].astype(str)
-        df["season"]  = season
-        return df
+        game_ids = _completed_game_ids()
+        all_rows = []
+        with ThreadPoolExecutor(max_workers=WORKERS) as ex:
+            futures = {ex.submit(parse_fn, gid): gid for gid in game_ids}
+            for fut in as_completed(futures):
+                try:
+                    all_rows.extend(fut.result())
+                except Exception:
+                    pass
+        return pd.DataFrame(all_rows) if all_rows else pd.DataFrame()
     except Exception:
         return pd.DataFrame()
 
 
-def _fetch_player_logs_for_season(season: str) -> pd.DataFrame:
-    data = _get(
-        "https://stats.nba.com/stats/playergamelogs",
-        {
-            "DateFrom": "", "DateTo": "", "GameSegment": "",
-            "LastNGames": "0", "LeagueID": LEAGUE_ID,
-            "Location": "", "MeasureType": "Base", "Month": "0",
-            "OpponentTeamID": "0", "Outcome": "", "PORound": "0",
-            "PerMode": "PerGame", "Period": "0", "PlayerID": "",
-            "Season": season, "SeasonSegment": "",
-            "SeasonType": "Regular Season", "ShotClockRange": "",
-            "TeamID": "0", "VsConference": "", "VsDivision": "",
-        },
-    )
-    rs   = data["resultSets"][0]
-    cols = [c.lower() for c in rs["headers"]]
-    df   = pd.DataFrame(rs["rowSet"], columns=cols)
-    if df.empty:
-        return pd.DataFrame()
-    rename = {
-        "player_id": "player_id", "player_name": "player_name",
-        "team_abbreviation": "team_abbr", "game_id": "game_id",
-        "game_date": "game_date", "matchup": "matchup", "wl": "wl",
-        "min": "min", "pts": "pts", "reb": "reb", "ast": "ast",
-        "stl": "stl", "blk": "blk", "tov": "tov", "fg3m": "fg3m",
-        "fgm": "fgm", "fga": "fga", "fg_pct": "fg_pct",
-        "ftm": "ftm", "fta": "fta", "plus_minus": "plus_minus",
-    }
-    keep = [c for c in rename if c in df.columns]
-    df   = df[keep].rename(columns=rename)
-    df["season"] = season
-    return df
+def fetch_team_game_logs(season: str = str(date.today().year)) -> pd.DataFrame:
+    return _fetch_all(_box_score_team_rows)
 
 
-def fetch_player_game_logs(season: str = SEASON) -> pd.DataFrame:
-    # Try current season first; fall back to prior season if not indexed yet
-    for s in [season, str(int(season) - 1)]:
-        try:
-            df = _fetch_player_logs_for_season(s)
-            if not df.empty:
-                return df
-        except Exception:
-            continue
-    return pd.DataFrame()
+def fetch_player_game_logs(season: str = str(date.today().year)) -> pd.DataFrame:
+    return _fetch_all(_box_score_player_rows)

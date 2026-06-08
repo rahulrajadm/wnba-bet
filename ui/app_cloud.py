@@ -182,10 +182,15 @@ def load_all_data():
     }
 
 
-# ── Session state ──────────────────────────────────────────────────────────────
+# ── Persistent data store (survives page refresh, shared across sessions) ──────
+# st.cache_resource holds its value as long as the server process is alive —
+# unlike st.session_state which is cleared on every browser refresh.
 
-if "app_data" not in st.session_state:
-    st.session_state.app_data = None
+@st.cache_resource
+def _data_store():
+    return {"payload": None}
+
+store = _data_store()
 
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 
@@ -206,7 +211,7 @@ with st.sidebar:
                 with st.spinner("Fetching data…"):
                     fresh = load_all_data()
                 if fresh["games"]:
-                    st.session_state.app_data = fresh
+                    store["payload"] = fresh
                     st.rerun()
                 else:
                     st.warning("No upcoming games found — Odds API has no lines posted yet. "
@@ -215,9 +220,9 @@ with st.sidebar:
                 st.error("Invalid passcode")
 
 
-# ── Gate: nothing runs until the user explicitly refreshes ────────────────────
+# ── Gate: first-ever load before any refresh has been triggered ────────────────
 
-data = st.session_state.app_data
+data = store["payload"]
 
 if data is None:
     st.info("No data loaded. Enter your passcode in the sidebar and press **Refresh All Data**.")

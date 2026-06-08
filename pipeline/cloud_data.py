@@ -2,80 +2,109 @@
 Fetch WNBA team and player game logs in-memory from NBA Stats API.
 Used by the Streamlit Cloud app (no SQLite).
 """
-import time
 import pandas as pd
-from nba_api.stats.endpoints import leaguegamelog, playergamelogs
+import requests
 
 LEAGUE_ID = "10"
 SEASON    = "2026"
 TIMEOUT   = 30
 
+# stats.nba.com blocks requests without browser-like headers on cloud IPs
+_HEADERS = {
+    "Accept":               "*/*",
+    "Accept-Language":      "en-US,en;q=0.9",
+    "Host":                 "stats.nba.com",
+    "Origin":               "https://www.nba.com",
+    "Referer":              "https://www.nba.com/",
+    "User-Agent":           (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/125.0.0.0 Safari/537.36"
+    ),
+    "x-nba-stats-origin":   "stats",
+    "x-nba-stats-token":    "true",
+}
+
+
+def _get(url: str, params: dict) -> dict:
+    resp = requests.get(url, headers=_HEADERS, params=params, timeout=TIMEOUT)
+    resp.raise_for_status()
+    return resp.json()
+
 
 def fetch_team_game_logs(season: str = SEASON) -> pd.DataFrame:
     try:
-        log = leaguegamelog.LeagueGameLog(
-            league_id=LEAGUE_ID, season=season,
-            season_type_all_star="Regular Season", timeout=TIMEOUT,
+        data = _get(
+            "https://stats.nba.com/stats/leaguegamelog",
+            {
+                "Counter": "0", "DateFrom": "", "DateTo": "",
+                "Direction": "DESC", "LeagueID": LEAGUE_ID,
+                "PlayerOrTeam": "T", "Season": season,
+                "SeasonType": "Regular Season", "Sorter": "DATE",
+            },
         )
-        df = log.get_data_frames()[0]
-        rows = []
-        for _, r in df.iterrows():
-            rows.append({
-                "game_id":    r["GAME_ID"],
-                "season":     season,
-                "team_id":    str(r["TEAM_ID"]),
-                "team_name":  r["TEAM_NAME"],
-                "team_abbr":  r["TEAM_ABBREVIATION"],
-                "game_date":  r["GAME_DATE"],
-                "matchup":    r["MATCHUP"],
-                "wl":         r["WL"],
-                "pts":        r["PTS"],
-                "fg_pct":     r["FG_PCT"],
-                "fg3_pct":    r["FG3_PCT"],
-                "ft_pct":     r["FT_PCT"],
-                "reb":        r["REB"],
-                "ast":        r["AST"],
-                "stl":        r["STL"],
-                "blk":        r["BLK"],
-                "tov":        r["TOV"],
-                "plus_minus": r["PLUS_MINUS"],
-            })
-        return pd.DataFrame(rows)
+        rs   = data["resultSets"][0]
+        cols = [c.lower() for c in rs["headers"]]
+        df   = pd.DataFrame(rs["rowSet"], columns=cols)
+        if df.empty:
+            return pd.DataFrame()
+        rename = {
+            "game_id": "game_id", "team_id": "team_id",
+            "team_name": "team_name", "team_abbreviation": "team_abbr",
+            "game_date": "game_date", "matchup": "matchup", "wl": "wl",
+            "pts": "pts", "fg_pct": "fg_pct", "fg3_pct": "fg3_pct",
+            "ft_pct": "ft_pct", "reb": "reb", "ast": "ast",
+            "stl": "stl", "blk": "blk", "tov": "tov",
+            "plus_minus": "plus_minus",
+        }
+        keep = [c for c in rename if c in df.columns]
+        df   = df[keep].rename(columns=rename)
+        df["team_id"] = df["team_id"].astype(str)
+        df["season"]  = season
+        return df
     except Exception:
         return pd.DataFrame()
 
 
-def _fetch_player_game_logs_for_season(season: str) -> pd.DataFrame:
-    logs = playergamelogs.PlayerGameLogs(
-        league_id_nullable=LEAGUE_ID,
-        season_nullable=season,
-        season_type_nullable="Regular Season",
-        timeout=TIMEOUT,
+def _fetch_player_logs_for_season(season: str) -> pd.DataFrame:
+    data = _get(
+        "https://stats.nba.com/stats/playergamelogs",
+        {
+            "DateFrom": "", "DateTo": "", "GameSegment": "",
+            "LastNGames": "0", "LeagueID": LEAGUE_ID,
+            "Location": "", "MeasureType": "Base", "Month": "0",
+            "OpponentTeamID": "0", "Outcome": "", "PORound": "0",
+            "PerMode": "PerGame", "Period": "0", "PlayerID": "",
+            "Season": season, "SeasonSegment": "",
+            "SeasonType": "Regular Season", "ShotClockRange": "",
+            "TeamID": "0", "VsConference": "", "VsDivision": "",
+        },
     )
-    df = logs.get_data_frames()[0]
+    rs   = data["resultSets"][0]
+    cols = [c.lower() for c in rs["headers"]]
+    df   = pd.DataFrame(rs["rowSet"], columns=cols)
+    if df.empty:
+        return pd.DataFrame()
+    rename = {
+        "player_id": "player_id", "player_name": "player_name",
+        "team_abbreviation": "team_abbr", "game_id": "game_id",
+        "game_date": "game_date", "matchup": "matchup", "wl": "wl",
+        "min": "min", "pts": "pts", "reb": "reb", "ast": "ast",
+        "stl": "stl", "blk": "blk", "tov": "tov", "fg3m": "fg3m",
+        "fgm": "fgm", "fga": "fga", "fg_pct": "fg_pct",
+        "ftm": "ftm", "fta": "fta", "plus_minus": "plus_minus",
+    }
+    keep = [c for c in rename if c in df.columns]
+    df   = df[keep].rename(columns=rename)
     df["season"] = season
-    df.rename(columns={
-        "PLAYER_ID": "player_id", "PLAYER_NAME": "player_name",
-        "TEAM_ABBREVIATION": "team_abbr", "GAME_ID": "game_id",
-        "GAME_DATE": "game_date", "MATCHUP": "matchup", "WL": "wl",
-        "MIN": "min", "PTS": "pts", "REB": "reb", "AST": "ast",
-        "STL": "stl", "BLK": "blk", "TOV": "tov", "FG3M": "fg3m",
-        "FGM": "fgm", "FGA": "fga", "FG_PCT": "fg_pct",
-        "FTM": "ftm", "FTA": "fta", "PLUS_MINUS": "plus_minus",
-    }, inplace=True)
-    keep = ["season", "player_id", "player_name", "team_abbr", "game_id",
-            "game_date", "matchup", "wl", "min", "pts", "reb", "ast",
-            "stl", "blk", "tov", "fg3m", "fgm", "fga", "fg_pct",
-            "ftm", "fta", "plus_minus"]
-    return df[[c for c in keep if c in df.columns]]
+    return df
 
 
 def fetch_player_game_logs(season: str = SEASON) -> pd.DataFrame:
-    # PlayerGameLogs sometimes doesn't index the new season immediately.
-    # Fall back to the prior season so props always have data.
+    # Try current season first; fall back to prior season if not indexed yet
     for s in [season, str(int(season) - 1)]:
         try:
-            df = _fetch_player_game_logs_for_season(s)
+            df = _fetch_player_logs_for_season(s)
             if not df.empty:
                 return df
         except Exception:

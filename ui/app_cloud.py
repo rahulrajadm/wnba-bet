@@ -141,13 +141,13 @@ def load_all_data():
         f_player_logs = ex.submit(fetch_player_game_logs)
         pp_lines    = f_pp.result(timeout=20)
         ud_lines    = f_ud.result(timeout=20)
-        # NBA Stats API may be slow/blocked on cloud — hard 15s deadline
+        # NBA Stats API: 45s to allow for season-fallback (two sequential calls)
         try:
-            team_logs = f_team_logs.result(timeout=15)
+            team_logs = f_team_logs.result(timeout=45)
         except Exception:
             team_logs = pd.DataFrame()
         try:
-            player_logs = f_player_logs.result(timeout=15)
+            player_logs = f_player_logs.result(timeout=45)
         except Exception:
             player_logs = pd.DataFrame()
 

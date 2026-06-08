@@ -126,8 +126,13 @@ def predict_game(home_team: str, away_team: str, game_logs_df=None) -> dict | No
 
 
 def prob_cover_spread(pred_diff: float, spread_line: float, std: float = 12.0) -> float:
-    """P(home team covers spread_line) given predicted point differential."""
-    return float(norm.cdf(pred_diff - spread_line, 0, std))
+    """P(home team covers spread_line) given predicted point differential.
+
+    Home covers if actual_diff > -spread_line (e.g. home -12.5 needs to win by 12.5+;
+    home +6.5 covers as long as it doesn't lose by more than 6.5).
+    P(actual_diff > -spread_line) = norm.cdf((pred_diff + spread_line) / std).
+    """
+    return float(norm.cdf(pred_diff + spread_line, 0, std))
 
 
 def prob_over_total(pred_total: float, total_line: float, std: float = 14.0) -> float:

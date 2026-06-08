@@ -370,8 +370,12 @@ with tab1:
     df = picks_to_df(hi[:75], show_context=show_ctx)
     if df is not None:
         st.dataframe(style_df(df), use_container_width=True, hide_index=True)
+    elif not data["games"]:
+        st.warning("No upcoming games found. The Odds API hasn't posted lines yet — try refreshing later in the day.")
+    elif not all_picks:
+        st.warning("Games were found but no picks cleared the edge threshold.")
     else:
-        st.info("No picks match current filters.")
+        st.warning("Picks exist but none match the current confidence or platform filters. Try lowering Min Confidence.")
 
 # ── Tab 2: Game Predictions ────────────────────────────────────────────────────
 
@@ -383,7 +387,7 @@ with tab2:
     games_list = data["games"]
 
     if not games_list:
-        st.info("No games found for today.")
+        st.warning("No upcoming games found. The Odds API hasn't posted lines yet — try refreshing later in the day.")
     else:
         for g in games_list:
             home, away = g["home_team"], g["away_team"]
@@ -435,8 +439,12 @@ with tab3:
     if df is not None:
         df = df.drop(columns=["Type", "Odds"], errors="ignore")
         st.dataframe(style_df(df), use_container_width=True, hide_index=True)
+    elif not data["games"]:
+        st.warning("No upcoming games found — no opponent context to generate props.")
+    elif not [p for p in all_picks if p["pick_type"] == "prop"]:
+        st.warning("No prop picks cleared the edge threshold.")
     else:
-        st.info("No prop picks match current filters.")
+        st.warning("Props exist but none match current filters. Try lowering Min Confidence or changing platforms.")
 
 # ── Tab 4: Platform Comparison ─────────────────────────────────────────────────
 

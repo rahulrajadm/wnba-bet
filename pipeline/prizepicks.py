@@ -50,12 +50,12 @@ def fetch_wnba_lines() -> list[dict]:
         pinfo    = included.get(pid, {}).get("attributes", {}) if pid else {}
 
         # odds_type controls which directions are available on this line:
-        # "standard" → both More and Less, "demon" → More only, "goblin" → Less only
+        # "standard" → both More and Less
+        # "demon"    → More only (elevated line, harder to hit)
+        # "goblin"   → More only (lowered line, easier to hit — still More only on PrizePicks)
         odds_type = attrs.get("odds_type", "standard")
-        if odds_type == "demon":
+        if odds_type in ("demon", "goblin"):
             allowed = "More"
-        elif odds_type == "goblin":
-            allowed = "Less"
         else:
             allowed = None   # both directions available
 

@@ -315,6 +315,8 @@ hi   = best
 
 
 # ── Game-time lookup: team name → {tip-off string, opponent label} ─────────────
+from pipeline.prizepicks import _TEAM_ABBR as _PP_ABBR
+
 _team_game_map: dict[str, dict] = {}
 for _g in data.get("games", []):
     try:
@@ -325,7 +327,14 @@ for _g in data.get("games", []):
     _h, _a = _g["home_team"], _g["away_team"]
     _team_game_map[_h] = {"tip": _tip, "opp": f"vs {_a}"}
     _team_game_map[_a] = {"tip": _tip, "opp": f"@ {_h}"}
-# Lowercase index for fallback fuzzy lookup
+
+# Also index by PrizePicks abbreviation so stale cached data
+# (player_team = "GSV" etc.) resolves without needing a refresh.
+for _abbr, _full in _PP_ABBR.items():
+    if _full in _team_game_map:
+        _team_game_map.setdefault(_abbr, _team_game_map[_full])
+
+# Lowercase fallback for any remaining mismatches
 _team_game_map_lc: dict[str, dict] = {k.lower(): v for k, v in _team_game_map.items()}
 
 
@@ -384,12 +393,15 @@ def picks_to_df(picks, show_context=False):
                 "Win ($)":    f"${p['potential_win']:.0f}",
             }
         else:
-            _pt = p.get("player_team", "")
-            _gi = _team_game_map.get(_pt) or _team_game_map_lc.get(_pt.lower(), {})
+            _pt      = p.get("player_team", "")
+            _pt_full = _PP_ABBR.get(_pt, _pt)   # expand abbrev → full name
+            _gi      = (_team_game_map.get(_pt)
+                        or _team_game_map.get(_pt_full)
+                        or _team_game_map_lc.get(_pt_full.lower(), {}))
             _ot = p.get("odds_type", "standard")
             _ot_label = {"goblin": "🐸 goblin", "demon": "😈 demon"}.get(_ot, "standard")
             row = {
-                "Team":       _pt,
+                "Team":       _pt_full,
                 "Tip-off":    _gi.get("tip", "—"),
                 "Type":       "Prop",
                 "Selection":  f"{p['player_name']} {p['stat_type']} {p['direction']} {p['line']}",

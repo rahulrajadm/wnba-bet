@@ -266,8 +266,14 @@ with st.sidebar:
         + (f" ({season_detail})" if season_detail else "")
     )
     st.divider()
-    min_conf  = st.selectbox("Min Confidence", ["LOW", "MEDIUM", "HIGH", "STRONG"], index=1)
-    platforms = st.multiselect("Prop Platforms", ["prizepicks", "underdog"], default=["prizepicks", "underdog"])
+    min_conf   = st.selectbox("Min Confidence", ["LOW", "MEDIUM", "HIGH", "STRONG"], index=1)
+    platforms  = st.multiselect("Prop Platforms", ["prizepicks", "underdog"], default=["prizepicks", "underdog"])
+    line_types = st.multiselect(
+        "Line Types",
+        ["standard", "goblin", "demon"],
+        default=["standard", "goblin", "demon"],
+        help="goblin = lowered line (easy More, lower payout). demon = elevated line (hard More). standard = normal line (More or Less).",
+    )
     show_game = st.toggle("Show game picks", value=True)
     show_prop = st.toggle("Show player props", value=True)
 
@@ -297,6 +303,8 @@ min_rank = TIER_RANK[min_conf]
 filtered = [p for p in all_picks if TIER_RANK.get(p["confidence_tier"], 0) >= min_rank]
 if platforms:
     filtered = [p for p in filtered if p["pick_type"] == "game" or p.get("platform") in platforms]
+if line_types and len(line_types) < 3:
+    filtered = [p for p in filtered if p["pick_type"] == "game" or p.get("odds_type", "standard") in line_types]
 if not show_game:
     filtered = [p for p in filtered if p["pick_type"] != "game"]
 if not show_prop:
@@ -343,6 +351,7 @@ def picks_to_df(picks, show_context=False):
             row = {
                 "Type":       p["market"],
                 "Selection":  p["selection"],
+                "Line Type":  "",
                 "Platform":   p["best_platform"],
                 "Odds":       f"{int(p['best_odds']):+d}" if p.get("best_odds") else "—",
                 "Model %":    f"{p['model_prob']:.1%}",
@@ -355,9 +364,12 @@ def picks_to_df(picks, show_context=False):
                 "Win ($)":    f"${p['potential_win']:.0f}",
             }
         else:
+            _ot = p.get("odds_type", "standard")
+            _ot_label = {"goblin": "🐸 goblin", "demon": "😈 demon"}.get(_ot, "standard")
             row = {
                 "Type":       "Prop",
                 "Selection":  f"{p['player_name']} {p['stat_type']} {p['direction']} {p['line']}",
+                "Line Type":  _ot_label,
                 "Platform":   p["platform"],
                 "Odds":       "—",
                 "Model %":    f"{p['model_prob']:.1%}",

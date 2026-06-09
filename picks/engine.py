@@ -316,6 +316,7 @@ def build_prop_picks(bankroll: float, unit_size: float, lines_data=None, player_
             "platform":          pred["platform"],
             "home_team":         "",
             "away_team":         "",
+            "odds_type":         pred.get("odds_type", "standard"),
         })
 
     return picks

@@ -265,6 +265,7 @@ def predict_props(
             "recent_rate":   round(recent_rate, 3) if recent_rate is not None else None,
             "form_source":   form,
             "game_id":       row.get("game_id", ""),
+            "odds_type":     row.get("odds_type", "standard"),
         })
 
     top_unk = sorted(_dbg["_unk"].items(), key=lambda x: -x[1])[:10]

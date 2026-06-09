@@ -71,6 +71,7 @@ def fetch_wnba_lines() -> list[dict]:
             "line":              attrs.get("line_score"),
             "game_id":           attrs.get("game_id", ""),
             "allowed_direction": allowed,
+            "odds_type":         odds_type,
             "more_odds":         None,
             "less_odds":         None,
         })

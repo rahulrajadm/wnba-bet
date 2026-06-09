@@ -441,6 +441,7 @@ with tab1:
     show_ctx = st.toggle("Show season/recent context", value=False)
     df = picks_to_df(hi[:75], show_context=show_ctx)
     if df is not None:
+        df = df.sort_values("Tip-off", key=lambda s: s.str.replace("—", "~", regex=False), kind="stable")
         st.dataframe(style_df(df), use_container_width=True, hide_index=True)
     elif not data["games"]:
         st.warning("No upcoming games found. The Odds API hasn't posted lines yet — try refreshing later in the day.")
@@ -526,6 +527,7 @@ with tab3:
     df = picks_to_df(filtered_props[:75], show_context=True)
     if df is not None:
         df = df.drop(columns=["Type", "Odds"], errors="ignore")
+        df = df.sort_values("Tip-off", key=lambda s: s.str.replace("—", "~", regex=False), kind="stable")
         st.dataframe(style_df(df), use_container_width=True, hide_index=True)
     elif not data["games"]:
         st.warning("No upcoming games found — no opponent context to generate props.")

@@ -281,7 +281,7 @@ with st.sidebar:
 # ── Build picks ────────────────────────────────────────────────────────────────
 
 @st.cache_data(show_spinner=False)
-def load_picks_cloud(bankroll, unit_size, _cache_key):
+def load_picks_cloud(bankroll, unit_size, cache_key):
     return build_picks(
         games=data["games"],
         bankroll=bankroll,

@@ -249,6 +249,20 @@ if data is None:
     st.info("No data loaded. Enter your passcode in the sidebar and press **Refresh All Data**.")
     st.stop()
 
+# ── Abbreviation map + date filter data (needed before sidebar renders) ────────
+from pipeline.prizepicks import _TEAM_ABBR as _PP_ABBR
+
+_team_date_map: dict[str, str] = {}
+for _g in data.get("games", []):
+    _d = _g.get("date", "")
+    if _d:
+        _team_date_map[_g["home_team"]] = _d
+        _team_date_map[_g["away_team"]] = _d
+        for _abbr, _full in _PP_ABBR.items():
+            if _full in (_g["home_team"], _g["away_team"]):
+                _team_date_map[_abbr] = _d
+_available_dates = sorted(set(_team_date_map.values()))
+
 with st.sidebar:
     st.caption(f"🕐 Last updated: **{data['fetched_at']}** CT")
     st.caption("Data: PrizePicks · Underdog · The Odds API")
@@ -274,6 +288,15 @@ with st.sidebar:
         default=["standard", "goblin", "demon"],
         help="goblin = lowered line (easy More, lower payout). demon = elevated line (hard More). standard = normal line (More or Less).",
     )
+    if len(_available_dates) > 1:
+        sel_dates = st.multiselect(
+            "Game Date",
+            options=_available_dates,
+            default=_available_dates,
+            format_func=lambda d: datetime.strptime(d, "%Y-%m-%d").strftime("%a, %b %-d"),
+        )
+    else:
+        sel_dates = list(_available_dates)
     show_game = st.toggle("Show game picks", value=True)
     show_prop = st.toggle("Show player props", value=True)
 
@@ -309,27 +332,33 @@ if not show_game:
     filtered = [p for p in filtered if p["pick_type"] != "game"]
 if not show_prop:
     filtered = [p for p in filtered if p["pick_type"] != "prop"]
+if sel_dates and len(sel_dates) < len(_available_dates):
+    def _get_pick_date(p):
+        if p["pick_type"] == "game":
+            return _team_date_map.get(p.get("home_team", ""), "")
+        pt = p.get("player_team", "")
+        return _team_date_map.get(pt) or _team_date_map.get(_PP_ABBR.get(pt, ""), "")
+    filtered = [p for p in filtered if _get_pick_date(p) in sel_dates]
 
 best = best_props_per_player(filtered)
 hi   = best
 
 
-# ── Game-time lookup: team name → {tip-off string, opponent label} ─────────────
-from pipeline.prizepicks import _TEAM_ABBR as _PP_ABBR
-
+# ── Game-time lookup: team name → {date, time, opponent label} ────────────────
 _team_game_map: dict[str, dict] = {}
 for _g in data.get("games", []):
     try:
-        _gt  = datetime.fromisoformat(_g["game_time"].replace("Z", "+00:00"))
-        _tip = _gt.astimezone(ZoneInfo("America/Chicago")).strftime("%b %d · %I:%M %p CT")
+        _ct   = datetime.fromisoformat(_g["game_time"].replace("Z", "+00:00")).astimezone(ZoneInfo("America/Chicago"))
+        _date = _ct.strftime("%b %d")
+        _time = _ct.strftime("%-I:%M %p CT")
     except Exception:
-        _tip = _g.get("date", "—")
+        _date = _g.get("date", "—")
+        _time = "—"
     _h, _a = _g["home_team"], _g["away_team"]
-    _team_game_map[_h] = {"tip": _tip, "opp": f"vs {_a}"}
-    _team_game_map[_a] = {"tip": _tip, "opp": f"@ {_h}"}
+    _team_game_map[_h] = {"date": _date, "time": _time, "opp": f"vs {_a}"}
+    _team_game_map[_a] = {"date": _date, "time": _time, "opp": f"@ {_h}"}
 
-# Also index by PrizePicks abbreviation so stale cached data
-# (player_team = "GSV" etc.) resolves without needing a refresh.
+# Index by PrizePicks abbreviation so stale cached player_team values resolve.
 for _abbr, _full in _PP_ABBR.items():
     if _full in _team_game_map:
         _team_game_map.setdefault(_abbr, _team_game_map[_full])
@@ -377,7 +406,8 @@ def picks_to_df(picks, show_context=False):
             _gi = _team_game_map.get(_h) or _team_game_map_lc.get(_h.lower(), {})
             row = {
                 "Team":       f"{_a} @ {_h}" if _h and _a else "",
-                "Tip-off":    _gi.get("tip", "—"),
+                "Date":       _gi.get("date", "—"),
+                "Time":       _gi.get("time", "—"),
                 "Type":       p["market"],
                 "Selection":  p["selection"],
                 "Line Type":  "",
@@ -402,7 +432,8 @@ def picks_to_df(picks, show_context=False):
             _ot_label = {"goblin": "🐸 goblin", "demon": "😈 demon"}.get(_ot, "standard")
             row = {
                 "Team":       _pt_full,
-                "Tip-off":    _gi.get("tip", "—"),
+                "Date":       _gi.get("date", "—"),
+                "Time":       _gi.get("time", "—"),
                 "Type":       "Prop",
                 "Selection":  f"{p['player_name']} {p['stat_type']} {p['direction']} {p['line']}",
                 "Line Type":  _ot_label,
@@ -453,7 +484,7 @@ with tab1:
     show_ctx = st.toggle("Show season/recent context", value=False)
     df = picks_to_df(hi[:75], show_context=show_ctx)
     if df is not None:
-        df = df.sort_values("Tip-off", key=lambda s: s.str.replace("—", "~", regex=False), kind="stable")
+        df = df.sort_values(["Date", "Time"], key=lambda s: s.str.replace("—", "~", regex=False), kind="stable")
         st.dataframe(style_df(df), use_container_width=True, hide_index=True)
     elif not data["games"]:
         st.warning("No upcoming games found. The Odds API hasn't posted lines yet — try refreshing later in the day.")
@@ -539,7 +570,7 @@ with tab3:
     df = picks_to_df(filtered_props[:75], show_context=True)
     if df is not None:
         df = df.drop(columns=["Type", "Odds"], errors="ignore")
-        df = df.sort_values("Tip-off", key=lambda s: s.str.replace("—", "~", regex=False), kind="stable")
+        df = df.sort_values(["Date", "Time"], key=lambda s: s.str.replace("—", "~", regex=False), kind="stable")
         st.dataframe(style_df(df), use_container_width=True, hide_index=True)
     elif not data["games"]:
         st.warning("No upcoming games found — no opponent context to generate props.")

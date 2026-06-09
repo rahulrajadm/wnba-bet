@@ -154,13 +154,16 @@ def predict_props(
 
     import sys
     _dbg = {"total": len(lines), "no_stat": 0, "combo": 0, "no_rate": 0,
-            "zero_blend": 0, "2x": 0, "no_edge": 0, "direction": 0, "passed": 0}
+            "zero_blend": 0, "2x": 0, "no_edge": 0, "direction": 0, "passed": 0,
+            "_unk": {}}
 
     predictions = []
     for _, row in lines.iterrows():
         stat_col = STAT_MAP.get(row["stat_type"])
         if stat_col is None or row["line"] is None:
             _dbg["no_stat"] += 1
+            st = str(row.get("stat_type", "?"))
+            _dbg["_unk"][st] = _dbg["_unk"].get(st, 0) + 1
             continue
 
         player_name = row["player_name"]
@@ -264,6 +267,7 @@ def predict_props(
             "game_id":       row.get("game_id", ""),
         })
 
+    top_unk = sorted(_dbg["_unk"].items(), key=lambda x: -x[1])[:10]
     print(
         f"[props] lines={_dbg['total']} "
         f"no_stat={_dbg['no_stat']} combo={_dbg['combo']} no_rate={_dbg['no_rate']} "
@@ -271,6 +275,7 @@ def predict_props(
         f"direction={_dbg['direction']} passed={_dbg['passed']}",
         file=sys.stderr,
     )
+    print(f"[props] unknown_stat_types: {top_unk}", file=sys.stderr)
     return predictions
 
 

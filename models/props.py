@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pandas as pd
 import numpy as np
+from datetime import date as _date, datetime as _datetime
 from scipy.stats import poisson, norm
 from utils.db import get_conn
 from pipeline.team_metrics import get_opp_pts_allowed, get_game_pace_factor, get_def_rating_adj
@@ -96,12 +97,12 @@ def prob_over_line(expected: float, line: float, stat_col: str) -> float:
     if stat_col in POISSON_STATS:
         if expected <= 0:
             return 0.0
-        threshold = int(np.ceil(line))
+        threshold = int(np.floor(line)) + 1
         return float(1.0 - poisson.cdf(threshold - 1, mu=expected))
     else:
         # Normal distribution for combo/fantasy stats
         std = max(expected * 0.35, 2.0)
-        return float(1 - norm.cdf(line + 0.5, loc=expected, scale=std))
+        return float(1 - norm.cdf(line, loc=expected, scale=std))
 
 
 def _build_team_opponent_map(games: list[dict]) -> dict[str, str]:
@@ -126,7 +127,19 @@ def predict_props(
     if games is None:
         from pipeline.schedule import get_today_games
         games = get_today_games()
-    opp_map = _build_team_opponent_map(games)
+
+    # Restrict props to players in TODAY's games only.
+    # The Odds API returns all upcoming games (today + tomorrow + beyond), so without
+    # this filter we'd evaluate props for players not on today's schedule.
+    # Compare in ET so evening games (tip-off ~8 PM ET = midnight UTC) aren't
+    # mis-labelled as the next calendar day.
+    try:
+        from zoneinfo import ZoneInfo as _ZI
+        _et_today = _datetime.now(_ZI("America/New_York")).strftime("%Y-%m-%d")
+    except Exception:
+        _et_today = _date.today().isoformat()
+    today_games = [g for g in games if g.get("date", _et_today) == _et_today]
+    opp_map = _build_team_opponent_map(today_games if today_games else games)
 
     if lines_data is not None:
         lines = pd.DataFrame(lines_data)
@@ -168,8 +181,21 @@ def predict_props(
 
         player_team = row.get("player_team", "")
 
-        # Fix 2: Actual opponent defensive rating
-        opp_team    = opp_map.get(player_team, "")
+        # For any residual abbreviations not covered by _TEAM_ABBR (e.g. 2026 expansion teams),
+        # try prefix-matching against today's opp_map keys before giving up.
+        if player_team and player_team not in opp_map and len(player_team) <= 4:
+            pt = player_team.lower()
+            for full_name in opp_map:
+                if any(w.startswith(pt) for w in full_name.lower().split()):
+                    player_team = full_name
+                    break
+
+        # Skip players whose team isn't in today's schedule.
+        # PrizePicks surfaces lines for future games (tomorrow, next week) — we can't
+        # evaluate those without an opponent, so drop them rather than use a league-avg proxy.
+        opp_team = opp_map.get(player_team, "")
+        if not opp_team:
+            continue
         opp_pts     = get_opp_pts_allowed(opp_team, game_logs_df=team_logs_df) if opp_team else LEAGUE_AVG_DRTG
         def_adj     = get_def_rating_adj(opp_pts)
         blended     = max(blended * def_adj, 0.0)
@@ -213,7 +239,7 @@ def predict_props(
         predictions.append({
             "platform":      row["platform"],
             "player_name":   player_name,
-            "player_team":   opp_team,
+            "player_team":   player_team,
             "stat_type":     row["stat_type"],
             "line":          line,
             "direction":     direction,

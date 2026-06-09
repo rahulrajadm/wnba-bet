@@ -77,11 +77,6 @@ def is_platform_realistic(pick: dict) -> bool:
     return True
 
 
-def is_high_interest(pick: dict) -> bool:
-    """Secondary display filter — primary filtering happens in is_platform_realistic."""
-    return True
-
-
 def build_game_picks(games: list[dict], bankroll: float, unit_size: float, odds_data: list[dict] | None = None, game_logs_df=None) -> list[dict]:
     """Generate ML, spread, and totals picks for today's games."""
     if odds_data is not None:
@@ -172,7 +167,6 @@ def build_game_picks(games: list[dict], bankroll: float, unit_size: float, odds_
             spread_line = best_sprd.get("home_spread") or 0
             p_cover   = prob_cover_spread(pred["pred_diff"], spread_line, pred["spread_std"])
             p_not     = 1 - p_cover
-            imp_p     = american_to_implied(best_sprd["home_odds"] or -110)
 
             for side_label, side_p, side_odds in [
                 (f"{home} {spread_line:+.1f}", p_cover, best_sprd["home_odds"]),
@@ -378,7 +372,7 @@ if __name__ == "__main__":
               f"{p['edge']:>+6.1%} {p['ev_per_100']:>+7.1f} {p['confidence_tier']:>7}  {p['platform']}")
 
     print("\n── TOP PROP PICKS ──────────────────────────────────────────────────")
-    hi_props = [p for p in prop_picks if is_high_interest(p) and 0.55 <= p["model_prob"] <= 0.85][:15]
+    hi_props = [p for p in prop_picks if 0.55 <= p["model_prob"] <= 0.85][:15]
     print(f"{'Player':<22} {'Stat':<22} {'Line':>5} {'Dir':>5} {'Model%':>7} {'Edge':>6}  {'Platform'}")
     print("-" * 90)
     for p in hi_props:

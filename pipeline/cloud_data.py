@@ -40,7 +40,7 @@ def _completed_game_ids(lookback: int = LOOKBACK) -> list[str]:
     start = end - timedelta(days=lookback)
     data  = _get(
         "https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/scoreboard",
-        {"dates": f"{start.strftime('%Y%m%d')}-{end.strftime('%Y%m%d')}"},
+        {"dates": f"{start.strftime('%Y%m%d')}-{end.strftime('%Y%m%d')}", "limit": 999},
     )
     return [
         e["id"] for e in data.get("events", [])
@@ -54,6 +54,8 @@ def _completed_game_ids_multiseason(num_seasons: int = PLAYER_SEASONS) -> list[s
     Completed game IDs spanning the current and prior calendar years.
     ESPN rejects cross-year date ranges, so each year is queried separately.
     """
+    global _season_game_counts
+    _season_game_counts = {}
     current_year = date.today().year
     seen: set[str] = set()
     ids: list[str] = []
@@ -62,16 +64,22 @@ def _completed_game_ids_multiseason(num_seasons: int = PLAYER_SEASONS) -> list[s
         try:
             data = _get(
                 "https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/scoreboard",
-                {"dates": f"{yr}0101-{yr}1231"},
+                {"dates": f"{yr}0101-{yr}1231", "limit": 999},
             )
-            for e in data.get("events", []):
-                if e.get("competitions", [{}])[0].get("status", {}).get("type", {}).get("completed"):
-                    gid = e["id"]
-                    if gid not in seen:
-                        seen.add(gid)
-                        ids.append(gid)
-        except Exception:
-            pass
+            yr_ids = [
+                e["id"] for e in data.get("events", [])
+                if e.get("competitions", [{}])[0].get("status", {}).get("type", {}).get("completed")
+                and e["id"] not in seen
+            ]
+            for gid in yr_ids:
+                seen.add(gid)
+                ids.append(gid)
+            _season_game_counts[yr] = len(yr_ids)
+            import sys
+            print(f"[cloud_data] ESPN {yr}: {len(yr_ids)} completed games", file=sys.stderr)
+        except Exception as _e:
+            import sys
+            print(f"[cloud_data] ESPN scoreboard query {yr} failed: {_e}", file=sys.stderr)
 
     return ids
 
@@ -226,16 +234,24 @@ def _box_score_player_rows(event_id: str) -> list[dict]:
     return rows
 
 
+_last_fetch_failures: int = 0
+_season_game_counts: dict[int, int] = {}  # populated by _completed_game_ids_multiseason
+
+
 def _fetch_all(game_ids: list[str], parse_fn) -> pd.DataFrame:
+    global _last_fetch_failures
+    _last_fetch_failures = 0
     try:
         all_rows = []
+        failed = 0
         with ThreadPoolExecutor(max_workers=WORKERS) as ex:
             futures = {ex.submit(parse_fn, gid): gid for gid in game_ids}
             for fut in as_completed(futures):
                 try:
                     all_rows.extend(fut.result())
                 except Exception:
-                    pass
+                    failed += 1
+        _last_fetch_failures = failed
         return pd.DataFrame(all_rows) if all_rows else pd.DataFrame()
     except Exception:
         return pd.DataFrame()

@@ -6,6 +6,7 @@ for today's matchups using rolling team stats.
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import functools
 import pandas as pd
 import numpy as np
 import joblib
@@ -19,6 +20,7 @@ LEAGUE_AVG_PTS = 82.0   # WNBA league average points per team per game
 ROLLING_WINDOWS = [5, 10]
 
 
+@functools.lru_cache(maxsize=1)
 def load_models():
     ml    = joblib.load(os.path.join(MODELS_DIR, "game_moneyline.pkl"))
     sprd  = joblib.load(os.path.join(MODELS_DIR, "game_spread.pkl"))
@@ -64,20 +66,25 @@ def get_team_rolling_stats(team_name: str, n: int = 10, game_logs_df=None) -> di
 
 def build_matchup_vector(home_team: str, away_team: str, feat_cols: list[str], game_logs_df=None) -> pd.DataFrame:
     """Build a single-row feature vector for a matchup."""
-    home_stats = get_team_rolling_stats(home_team, game_logs_df=game_logs_df)
-    away_stats = get_team_rolling_stats(away_team, game_logs_df=game_logs_df)
+    home_s10 = get_team_rolling_stats(home_team, n=10, game_logs_df=game_logs_df)
+    away_s10 = get_team_rolling_stats(away_team, n=10, game_logs_df=game_logs_df)
 
-    if not home_stats or not away_stats:
+    if not home_s10 or not away_s10:
         return None
+
+    home_s5 = get_team_rolling_stats(home_team, n=5, game_logs_df=game_logs_df) or home_s10
+    away_s5 = get_team_rolling_stats(away_team, n=5, game_logs_df=game_logs_df) or away_s10
+    _ws = {5: (home_s5, away_s5), 10: (home_s10, away_s10)}
 
     row = {}
     stat_cols = ["pts", "fg_pct", "fg3_pct", "reb", "ast", "stl", "blk", "tov", "plus_minus"]
     for col in stat_cols:
         for w in ROLLING_WINDOWS:
-            row[f"home_{col}_last{w}"] = home_stats.get(col, 0)
-            row[f"away_{col}_last{w}"] = away_stats.get(col, 0)
-    row["home_win_pct_last10"] = home_stats.get("win_pct", 0.5)
-    row["away_win_pct_last10"] = away_stats.get("win_pct", 0.5)
+            h, a = _ws[w]
+            row[f"home_{col}_last{w}"] = h.get(col, 0)
+            row[f"away_{col}_last{w}"] = a.get(col, 0)
+    row["home_win_pct_last10"] = home_s10.get("win_pct", 0.5)
+    row["away_win_pct_last10"] = away_s10.get("win_pct", 0.5)
     row["home_rest_days"]      = get_rest_days(home_team, game_logs_df=game_logs_df)
     row["away_rest_days"]      = get_rest_days(away_team, game_logs_df=game_logs_df)
     row["rest_advantage"]      = row["home_rest_days"] - row["away_rest_days"]

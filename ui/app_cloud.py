@@ -24,9 +24,10 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "../.env"))
 
 from pipeline.prizepicks import fetch_wnba_lines as pp_fetch
 from pipeline.underdog import fetch_wnba_lines as ud_fetch
+from pipeline import cloud_data as _cloud_data
 from pipeline.cloud_data import fetch_team_game_logs, fetch_player_game_logs
 from pipeline.injuries import fetch_injury_flags
-from picks.engine import build_picks, best_props_per_player, is_high_interest
+from picks.engine import build_picks, best_props_per_player
 from analysis.confidence import TIER_COLORS, TIER_RANK
 from analysis.risk import RISK_COLORS
 from analysis.ev import ev_slip
@@ -82,14 +83,16 @@ def fetch_odds_and_schedule() -> tuple[list[dict], list[dict]]:
             if game_dt <= now_utc:
                 continue
 
-            game_date = game_dt.strftime("%Y-%m-%d")
+            # Store date in ET so evening games (tip-off ~8 PM ET = midnight UTC)
+            # aren't mis-labelled as the next calendar day.
+            game_date = game_dt.astimezone(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
 
             if game_id not in seen_games:
                 seen_games[game_id] = {
                     "game_id": game_id, "date": game_date,
                     "home_team": home_team, "away_team": away_team,
                     "home_team_id": "", "away_team_id": "",
-                    "game_time": commence, "season": "2026",
+                    "game_time": commence, "season": str(date.today().year),
                 }
 
             for bm in game.get("bookmakers", []):
@@ -147,14 +150,24 @@ def load_all_data():
         f_ud          = ex.submit(ud_fetch)
         f_team_logs   = ex.submit(fetch_team_game_logs)
         f_player_logs = ex.submit(fetch_player_game_logs)
-        pp_lines    = f_pp.result(timeout=20)
-        ud_lines    = f_ud.result(timeout=20)
+        try:
+            pp_lines = f_pp.result(timeout=20)
+        except Exception:
+            pp_lines = []
+        try:
+            ud_lines = f_ud.result(timeout=20)
+        except Exception:
+            ud_lines = []
         try:
             team_logs = f_team_logs.result(timeout=45)
+            if _cloud_data._last_fetch_failures:
+                st.warning(f"ESPN: {_cloud_data._last_fetch_failures} team box-score fetch(es) failed — team stats may be incomplete.")
         except Exception:
             team_logs = pd.DataFrame()
         try:
             player_logs = f_player_logs.result(timeout=45)
+            if _cloud_data._last_fetch_failures:
+                st.warning(f"ESPN: {_cloud_data._last_fetch_failures} player box-score fetch(es) failed — prop stats may be incomplete.")
         except Exception:
             player_logs = pd.DataFrame()
 
@@ -241,11 +254,16 @@ with st.sidebar:
     st.caption("Data: PrizePicks · Underdog · The Odds API")
     tl = data.get("team_logs")
     pl = data.get("player_logs")
+    pl_rows = len(pl) if pl is not None and not pl.empty else 0
+    season_detail = "  ·  ".join(
+        f"{yr}: {cnt}g" for yr, cnt in sorted(_cloud_data._season_game_counts.items())
+    )
     st.caption(
         f"Games: {len(data['games'])} · "
         f"Lines: {len(data['lines'])} · "
         f"Team logs: {len(tl) if tl is not None and not tl.empty else 0} rows · "
-        f"Player logs: {len(pl) if pl is not None and not pl.empty else 0} rows"
+        f"Player logs: {pl_rows} rows"
+        + (f" ({season_detail})" if season_detail else "")
     )
     st.divider()
     min_conf  = st.selectbox("Min Confidence", ["LOW", "MEDIUM", "HIGH", "STRONG"], index=1)
@@ -285,7 +303,7 @@ if not show_prop:
     filtered = [p for p in filtered if p["pick_type"] != "prop"]
 
 best = best_props_per_player(filtered)
-hi   = [p for p in best if is_high_interest(p)]
+hi   = best
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────

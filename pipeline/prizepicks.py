@@ -12,6 +12,20 @@ from utils.db import get_conn
 PRIZEPICKS_URL  = "https://api.prizepicks.com/projections"
 WNBA_LEAGUE_ID  = 3
 
+_TEAM_ABBR: dict[str, str] = {
+    "ATL": "Atlanta Dream",
+    "CHI": "Chicago Sky",
+    "CON": "Connecticut Sun",
+    "DAL": "Dallas Wings",
+    "IND": "Indiana Fever",
+    "LAS": "Las Vegas Aces",
+    "MIN": "Minnesota Lynx",
+    "NY":  "New York Liberty",
+    "PHX": "Phoenix Mercury",
+    "SEA": "Seattle Storm",
+    "WAS": "Washington Mystics",
+}
+
 HEADERS = {
     "User-Agent": "Mozilla/5.0",
     "Accept":     "application/json",
@@ -45,11 +59,14 @@ def fetch_wnba_lines() -> list[dict]:
         else:
             allowed = None   # both directions available
 
+        raw_abbr = pinfo.get("team", "")
+        player_team = _TEAM_ABBR.get(raw_abbr, raw_abbr)
+
         props.append({
             "platform":          "prizepicks",
             "fetched_at":        datetime.now(timezone.utc).isoformat(),
             "player_name":       pinfo.get("display_name", attrs.get("description", "")),
-            "player_team":       pinfo.get("team", ""),
+            "player_team":       player_team,
             "stat_type":         attrs.get("stat_type", ""),
             "line":              attrs.get("line_score"),
             "game_id":           attrs.get("game_id", ""),

@@ -37,6 +37,21 @@ def fetch_wnba_lines() -> list[dict]:
         stat      = line.get("over_under", {}).get("appearance_stat", {}).get("display_stat", "")
         ou_line   = line.get("stat_value")
 
+        # Resolve UUID → full team name using the game's title field
+        game      = games.get(match_id, {})
+        team_uuid = appearance.get("team_id", "")
+        title     = game.get("full_team_names_title", "")
+        if " @ " in title:
+            away_name, home_name = [t.strip() for t in title.split(" @ ", 1)]
+            if team_uuid == game.get("home_team_id", ""):
+                player_team = home_name
+            elif team_uuid == game.get("away_team_id", ""):
+                player_team = away_name
+            else:
+                player_team = team_uuid
+        else:
+            player_team = team_uuid
+
         # "balanced" lines have both higher and lower options.
         # "alternate" lines have only one direction — read it from options[].choice.
         line_type = line.get("line_type", "balanced")
@@ -55,7 +70,7 @@ def fetch_wnba_lines() -> list[dict]:
             "platform":          "underdog",
             "fetched_at":        datetime.now(timezone.utc).isoformat(),
             "player_name":       f"{player.get('first_name', '')} {player.get('last_name', '')}".strip(),
-            "player_team":       appearance.get("team_id", ""),
+            "player_team":       player_team,
             "stat_type":         stat,
             "line":              float(ou_line) if ou_line is not None else None,
             "game_id":           str(match_id),

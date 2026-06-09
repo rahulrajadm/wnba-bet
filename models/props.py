@@ -190,13 +190,11 @@ def predict_props(
                     player_team = full_name
                     break
 
-        # Skip players whose team isn't in today's schedule.
-        # PrizePicks surfaces lines for future games (tomorrow, next week) — we can't
-        # evaluate those without an opponent, so drop them rather than use a league-avg proxy.
+        # Look up today's opponent. If the team name doesn't resolve (empty player_team,
+        # unresolved abbreviation, or player in a future-day game), fall back to league-average
+        # defensive adjustment rather than skipping — the edge calculation still works.
         opp_team = opp_map.get(player_team, "")
-        if not opp_team:
-            continue
-        opp_pts     = get_opp_pts_allowed(opp_team, game_logs_df=team_logs_df) if opp_team else LEAGUE_AVG_DRTG
+        opp_pts  = get_opp_pts_allowed(opp_team, game_logs_df=team_logs_df) if opp_team else LEAGUE_AVG_DRTG
         def_adj     = get_def_rating_adj(opp_pts)
         blended     = max(blended * def_adj, 0.0)
 

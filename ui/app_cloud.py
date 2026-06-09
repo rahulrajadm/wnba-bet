@@ -325,6 +325,8 @@ for _g in data.get("games", []):
     _h, _a = _g["home_team"], _g["away_team"]
     _team_game_map[_h] = {"tip": _tip, "opp": f"vs {_a}"}
     _team_game_map[_a] = {"tip": _tip, "opp": f"@ {_h}"}
+# Lowercase index for fallback fuzzy lookup
+_team_game_map_lc: dict[str, dict] = {k.lower(): v for k, v in _team_game_map.items()}
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -363,7 +365,7 @@ def picks_to_df(picks, show_context=False):
         if p["pick_type"] == "game":
             _h  = p.get("home_team", "")
             _a  = p.get("away_team", "")
-            _gi = _team_game_map.get(_h, {})
+            _gi = _team_game_map.get(_h) or _team_game_map_lc.get(_h.lower(), {})
             row = {
                 "Team":       f"{_a} @ {_h}" if _h and _a else "",
                 "Tip-off":    _gi.get("tip", "—"),
@@ -383,7 +385,7 @@ def picks_to_df(picks, show_context=False):
             }
         else:
             _pt = p.get("player_team", "")
-            _gi = _team_game_map.get(_pt, {})
+            _gi = _team_game_map.get(_pt) or _team_game_map_lc.get(_pt.lower(), {})
             _ot = p.get("odds_type", "standard")
             _ot_label = {"goblin": "🐸 goblin", "demon": "😈 demon"}.get(_ot, "standard")
             row = {

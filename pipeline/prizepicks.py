@@ -17,12 +17,15 @@ _TEAM_ABBR: dict[str, str] = {
     "CHI": "Chicago Sky",
     "CON": "Connecticut Sun",
     "DAL": "Dallas Wings",
+    "GSV": "Golden State Valkyries",
     "IND": "Indiana Fever",
     "LAS": "Las Vegas Aces",
     "MIN": "Minnesota Lynx",
     "NY":  "New York Liberty",
     "PHX": "Phoenix Mercury",
+    "POR": "Portland Fire",
     "SEA": "Seattle Storm",
+    "TOR": "Toronto Tempo",
     "WAS": "Washington Mystics",
 }
 

@@ -165,7 +165,7 @@ def load_all_data():
         except Exception:
             team_logs = pd.DataFrame()
         try:
-            player_logs = f_player_logs.result(timeout=45)
+            player_logs = f_player_logs.result(timeout=120)
             if _cloud_data._last_fetch_failures:
                 st.warning(f"ESPN: {_cloud_data._last_fetch_failures} player box-score fetch(es) failed — prop stats may be incomplete.")
         except Exception:

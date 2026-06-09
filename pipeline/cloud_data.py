@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 TIMEOUT          = 15
 LOOKBACK         = 35   # days for team logs — current-season form only
 PLAYER_SEASONS   = 2    # calendar years of player data (current + N-1 prior seasons)
-WORKERS          = 10   # parallel box-score requests
+WORKERS          = 6    # parallel box-score requests — keeps ESPN from rate-limiting cloud IPs
 
 _HEADERS = {
     "User-Agent": (

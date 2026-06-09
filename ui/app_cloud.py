@@ -233,6 +233,7 @@ with st.sidebar:
                     fresh = load_all_data()
                 if fresh["games"]:
                     store["payload"] = fresh
+                    load_picks_cloud.clear()
                     st.rerun()
                 else:
                     st.warning("No upcoming games found — Odds API has no lines posted yet. "

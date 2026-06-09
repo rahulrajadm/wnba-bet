@@ -348,7 +348,7 @@ def best_props_per_player(picks: list[dict]) -> list[dict]:
         if p["pick_type"] != "prop":
             out.append(p)
             continue
-        key = (p["player_name"], p["stat_type"])
+        key = (p["player_name"], p["stat_type"], p.get("odds_type", "standard"))
         if key not in seen:
             seen[key] = True
             out.append(p)

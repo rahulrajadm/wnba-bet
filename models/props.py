@@ -149,7 +149,7 @@ def predict_props(
         conn.close()
 
     lines = lines.sort_values("fetched_at", ascending=False).drop_duplicates(
-        subset=["platform", "player_name", "stat_type"]
+        subset=["platform", "player_name", "stat_type", "odds_type"]
     )
 
     import sys

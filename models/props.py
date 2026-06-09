@@ -241,10 +241,12 @@ def predict_props(
             continue
 
         # Skip if this line only supports one direction and the model disagrees.
-        # Demon lines (elevated) are More-only; goblin lines are Less-only.
-        # Recommending the unavailable direction is misleading and unbettable.
+        # Demon/goblin lines are More-only; standard lines allow both directions.
+        # Use pd.notna() because None becomes NaN in the DataFrame, and NaN is
+        # truthy in Python — without this, standard lines (allowed=NaN) would
+        # incorrectly trigger the direction filter and be rejected.
         allowed = row.get("allowed_direction")
-        if allowed and direction != allowed:
+        if pd.notna(allowed) and direction != allowed:
             _dbg["direction"] += 1
             continue
 

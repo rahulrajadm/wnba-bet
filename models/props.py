@@ -152,10 +152,15 @@ def predict_props(
         subset=["platform", "player_name", "stat_type"]
     )
 
+    import sys
+    _dbg = {"total": len(lines), "no_stat": 0, "combo": 0, "no_rate": 0,
+            "zero_blend": 0, "2x": 0, "no_edge": 0, "direction": 0, "passed": 0}
+
     predictions = []
     for _, row in lines.iterrows():
         stat_col = STAT_MAP.get(row["stat_type"])
         if stat_col is None or row["line"] is None:
+            _dbg["no_stat"] += 1
             continue
 
         player_name = row["player_name"]
@@ -164,10 +169,12 @@ def predict_props(
         # Multi-player combo props (e.g. "Clark + Stewart Points") require summing
         # two players' expected values — the single-player model can't evaluate them.
         if " + " in player_name or " & " in player_name:
+            _dbg["combo"] += 1
             continue
 
         season_rate = get_player_season_rate(player_name, stat_col, logs)
         if season_rate is None or season_rate < 0:
+            _dbg["no_rate"] += 1
             continue
 
         recent_rate = get_player_recent_rate(player_name, stat_col, logs)
@@ -208,12 +215,14 @@ def predict_props(
             blended = max(blended * pace_factor, 0.0)
 
         if blended <= 0:
+            _dbg["zero_blend"] += 1
             continue
 
         # Skip lines above 2× the blended expectation — these are demon/elevated
         # lines where "Less" becomes near-certain. The MORE_MIN_LINE table in
         # engine.py handles the floor (goblin/lowered) side by stat type.
         if line > blended * 2.0:
+            _dbg["2x"] += 1
             continue
 
         p_more = prob_over_line(blended, line, stat_col)
@@ -225,6 +234,7 @@ def predict_props(
             direction, model_prob, edge = "Less", p_less, p_less - 0.50
 
         if edge <= 0:
+            _dbg["no_edge"] += 1
             continue
 
         # Skip if this line only supports one direction and the model disagrees.
@@ -232,7 +242,10 @@ def predict_props(
         # Recommending the unavailable direction is misleading and unbettable.
         allowed = row.get("allowed_direction")
         if allowed and direction != allowed:
+            _dbg["direction"] += 1
             continue
+
+        _dbg["passed"] += 1
 
         predictions.append({
             "platform":      row["platform"],
@@ -251,6 +264,13 @@ def predict_props(
             "game_id":       row.get("game_id", ""),
         })
 
+    print(
+        f"[props] lines={_dbg['total']} "
+        f"no_stat={_dbg['no_stat']} combo={_dbg['combo']} no_rate={_dbg['no_rate']} "
+        f"zero_blend={_dbg['zero_blend']} 2x_filter={_dbg['2x']} no_edge={_dbg['no_edge']} "
+        f"direction={_dbg['direction']} passed={_dbg['passed']}",
+        file=sys.stderr,
+    )
     return predictions
 
 

@@ -314,6 +314,19 @@ best = best_props_per_player(filtered)
 hi   = best
 
 
+# ── Game-time lookup: team name → {tip-off string, opponent label} ─────────────
+_team_game_map: dict[str, dict] = {}
+for _g in data.get("games", []):
+    try:
+        _gt  = datetime.fromisoformat(_g["game_time"].replace("Z", "+00:00"))
+        _tip = _gt.astimezone(ZoneInfo("America/Chicago")).strftime("%b %d · %I:%M %p CT")
+    except Exception:
+        _tip = _g.get("date", "—")
+    _h, _a = _g["home_team"], _g["away_team"]
+    _team_game_map[_h] = {"tip": _tip, "opp": f"vs {_a}"}
+    _team_game_map[_a] = {"tip": _tip, "opp": f"@ {_h}"}
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def timestamp_bar(fetched_at: str):
@@ -348,7 +361,12 @@ def picks_to_df(picks, show_context=False):
     rows = []
     for p in picks:
         if p["pick_type"] == "game":
+            _h  = p.get("home_team", "")
+            _a  = p.get("away_team", "")
+            _gi = _team_game_map.get(_h, {})
             row = {
+                "Team":       f"{_a} @ {_h}" if _h and _a else "",
+                "Tip-off":    _gi.get("tip", "—"),
                 "Type":       p["market"],
                 "Selection":  p["selection"],
                 "Line Type":  "",
@@ -364,9 +382,13 @@ def picks_to_df(picks, show_context=False):
                 "Win ($)":    f"${p['potential_win']:.0f}",
             }
         else:
+            _pt = p.get("player_team", "")
+            _gi = _team_game_map.get(_pt, {})
             _ot = p.get("odds_type", "standard")
             _ot_label = {"goblin": "🐸 goblin", "demon": "😈 demon"}.get(_ot, "standard")
             row = {
+                "Team":       _pt,
+                "Tip-off":    _gi.get("tip", "—"),
                 "Type":       "Prop",
                 "Selection":  f"{p['player_name']} {p['stat_type']} {p['direction']} {p['line']}",
                 "Line Type":  _ot_label,

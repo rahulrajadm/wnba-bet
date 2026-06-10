@@ -27,10 +27,12 @@ from pipeline.underdog import fetch_wnba_lines as ud_fetch
 from pipeline import cloud_data as _cloud_data
 from pipeline.cloud_data import fetch_team_game_logs, fetch_player_game_logs
 from pipeline.injuries import fetch_injury_flags
-from picks.engine import build_picks, best_props_per_player
+from picks.engine import build_picks, best_props_per_player, MODEL_WEIGHT
+from models.game import predict_game
 from analysis.confidence import TIER_COLORS, TIER_RANK
 from analysis.risk import RISK_COLORS
 from analysis.ev import ev_slip
+from scipy.stats import norm as _norm
 
 st.set_page_config(page_title="WNBA Bet", page_icon="🏀", layout="wide", initial_sidebar_state="expanded")
 
@@ -510,6 +512,43 @@ with tab2:
     game_picks = [p for p in best if p["pick_type"] == "game"]
     games_list = data["games"]
 
+    # Model's view for every game, even where there's no bet. Shown with an
+    # explicit "pass" so an empty market reads as a decision, not missing data.
+    @st.cache_data(show_spinner=False)
+    def _model_views(cache_key):
+        odds_df = pd.DataFrame(data["odds"]) if data.get("odds") else pd.DataFrame()
+        views = {}
+        for _g in data["games"]:
+            _h, _a = _g["home_team"], _g["away_team"]
+            try:
+                _pred = predict_game(_h, _a, game_logs_df=data.get("team_logs"))
+            except Exception:
+                _pred = None
+            if not _pred:
+                continue
+            sl = tl = None
+            if not odds_df.empty:
+                _go = odds_df[odds_df["home_team"].str.lower() == _h.lower()]
+                _s  = _go[_go["market"] == "spread"]["home_spread"].dropna()
+                _t  = _go[_go["market"] == "totals"]["total_line"].dropna()
+                sl  = float(_s.iloc[0]) if len(_s) else None
+                tl  = float(_t.iloc[0]) if len(_t) else None
+            # Same anchoring as picks/engine.py so the displayed view matches
+            # the probabilities the pick filter actually used.
+            diff  = _pred["pred_diff"]
+            total = _pred["pred_total"]
+            if sl is not None:
+                diff = MODEL_WEIGHT * diff + (1 - MODEL_WEIGHT) * (-sl)
+            if tl is not None:
+                total = MODEL_WEIGHT * total + (1 - MODEL_WEIGHT) * tl
+            views[_h] = {
+                "diff": diff, "total": total, "spread_line": sl, "total_line": tl,
+                "home_p": float(_norm.cdf(diff / _pred["spread_std"])),
+            }
+        return views
+
+    views = _model_views(data["fetched_at"])
+
     if not games_list:
         st.warning("No upcoming games found. The Odds API hasn't posted lines yet — try refreshing later in the day.")
     else:
@@ -546,23 +585,36 @@ with tab2:
                 ml = [p for p in g_picks if p["market"] == "Moneyline"]
                 sp = [p for p in g_picks if p["market"] == "Spread"]
                 to = [p for p in g_picks if p["market"] == "Totals"]
+                v  = views.get(home)
 
-                if g_picks:
-                    c1, c2, c3 = st.columns(3)
-                    with c1:
-                        st.markdown("**Moneyline**")
-                        for p in ml:
-                            st.markdown(f"- {p['selection']} `{p['model_prob']:.1%}` edge `{p['edge']:+.1%}` @ {p['best_platform']} `{int(p['best_odds']):+d}`")
-                    with c2:
-                        st.markdown("**Spread**")
-                        for p in sp:
-                            st.markdown(f"- {p['selection']} `{p['model_prob']:.1%}` edge `{p['edge']:+.1%}` @ {p['best_platform']}")
-                    with c3:
-                        st.markdown("**Totals**")
-                        for p in to:
-                            st.markdown(f"- {p['selection']} `{p['model_prob']:.1%}` edge `{p['edge']:+.1%}` @ {p['best_platform']}")
-                else:
-                    st.caption("No +EV picks for this game.")
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    st.markdown("**Moneyline**")
+                    for p in ml:
+                        st.markdown(f"- {p['selection']} `{p['model_prob']:.1%}` edge `{p['edge']:+.1%}` @ {p['best_platform']} `{int(p['best_odds']):+d}`")
+                    if not ml and v:
+                        fav, fp = (home, v["home_p"]) if v["home_p"] >= 0.5 else (away, 1 - v["home_p"])
+                        st.caption(f"Model: {fav} `{fp:.0%}` — market agrees → **pass**")
+                with c2:
+                    st.markdown("**Spread**")
+                    for p in sp:
+                        st.markdown(f"- {p['selection']} `{p['model_prob']:.1%}` edge `{p['edge']:+.1%}` @ {p['best_platform']}")
+                    if not sp and v:
+                        if v["spread_line"] is not None:
+                            st.caption(f"Model: {home} by `{v['diff']:+.1f}` vs line `{-v['spread_line']:+.1f}` → **pass**")
+                        else:
+                            st.caption(f"Model: {home} by `{v['diff']:+.1f}` — no line posted")
+                with c3:
+                    st.markdown("**Totals**")
+                    for p in to:
+                        st.markdown(f"- {p['selection']} `{p['model_prob']:.1%}` edge `{p['edge']:+.1%}` @ {p['best_platform']}")
+                    if not to and v:
+                        if v["total_line"] is not None:
+                            st.caption(f"Model: `{v['total']:.1f}` vs line `{v['total_line']:.1f}` → **pass**")
+                        else:
+                            st.caption(f"Model: `{v['total']:.1f}` total — no line posted")
+                if not g_picks and not v:
+                    st.caption("Not enough data to model this game yet.")
 
 # ── Tab 3: Player Props ────────────────────────────────────────────────────────
 

@@ -544,6 +544,7 @@ with tab2:
             views[_h] = {
                 "diff": diff, "total": total, "spread_line": sl, "total_line": tl,
                 "home_p": float(_norm.cdf(diff / _pred["spread_std"])),
+                "spread_std": _pred["spread_std"], "totals_std": _pred["totals_std"],
             }
         return views
 
@@ -552,6 +553,11 @@ with tab2:
     if not games_list:
         st.warning("No upcoming games found. The Odds API hasn't posted lines yet — try refreshing later in the day.")
     else:
+        st.caption(
+            "**pass** = the model's probability doesn't beat the market price by enough to overcome the vig "
+            "(spread/totals at -110 need ~56%+). A confident pass is still a pass — the payout already reflects "
+            "the market's matching confidence."
+        )
         for g in games_list:
             home, away = g["home_team"], g["away_team"]
             g_picks = [p for p in game_picks if p["home_team"] == home]
@@ -600,17 +606,24 @@ with tab2:
                     for p in sp:
                         st.markdown(f"- {p['selection']} `{p['model_prob']:.1%}` edge `{p['edge']:+.1%}` @ {p['best_platform']}")
                     if not sp and v:
+                        fav_t, fav_m = (home, v["diff"]) if v["diff"] >= 0 else (away, -v["diff"])
                         if v["spread_line"] is not None:
-                            st.caption(f"Model: {home} by `{v['diff']:+.1f}` vs line `{-v['spread_line']:+.1f}` → **pass**")
+                            p_cov = float(_norm.cdf((v["diff"] + v["spread_line"]) / v["spread_std"]))
+                            side_lbl, pc = ((f"{home} {v['spread_line']:+.1f}", p_cov) if p_cov >= 0.5
+                                            else (f"{away} {-v['spread_line']:+.1f}", 1 - p_cov))
+                            st.caption(f"Model: {fav_t} by `{fav_m:.1f}` · {side_lbl} covers `{pc:.0%}` → **pass**")
                         else:
-                            st.caption(f"Model: {home} by `{v['diff']:+.1f}` — no line posted")
+                            st.caption(f"Model: {fav_t} by `{fav_m:.1f}` — no line posted")
                 with c3:
                     st.markdown("**Totals**")
                     for p in to:
                         st.markdown(f"- {p['selection']} `{p['model_prob']:.1%}` edge `{p['edge']:+.1%}` @ {p['best_platform']}")
                     if not to and v:
                         if v["total_line"] is not None:
-                            st.caption(f"Model: `{v['total']:.1f}` vs line `{v['total_line']:.1f}` → **pass**")
+                            p_over = float(1 - _norm.cdf(v["total_line"], v["total"], v["totals_std"]))
+                            ou_lbl, po = ("Over", p_over) if p_over >= 0.5 else ("Under", 1 - p_over)
+                            st.caption(f"Model: `{v['total']:.1f}` vs line `{v['total_line']:.1f}` · "
+                                       f"{ou_lbl} `{po:.0%}` → **pass**")
                         else:
                             st.caption(f"Model: `{v['total']:.1f}` total — no line posted")
                 if not g_picks and not v:

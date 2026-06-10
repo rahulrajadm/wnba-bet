@@ -12,6 +12,7 @@ from datetime import date as _date, datetime as _datetime
 from scipy.stats import poisson, norm
 from utils.db import get_conn
 from pipeline.team_metrics import get_opp_pts_allowed, get_game_pace_factor, get_def_rating_adj
+from analysis.ev import breakeven_prob
 
 RECENT_GAMES    = 10
 RECENT_WEIGHT   = 0.55
@@ -47,6 +48,9 @@ STAT_MAP = {
 POISSON_STATS  = {"pts", "reb", "ast", "stl", "blk", "fg3m", "tov", "ftm"}
 # Stats where normal distribution fits better (combo stats, fantasy)
 NORMAL_STATS   = {"pra", "pts_reb", "pts_ast", "reb_ast", "blk_stl", "fantasy"}
+# Stats affected by opponent scoring defense. Rebounds/assists/steals should
+# NOT be scaled by how many points the opponent allows.
+SCORING_STATS  = {"pts", "fg3m", "ftm", "pra", "pts_reb", "pts_ast", "fantasy"}
 
 
 def load_player_logs() -> pd.DataFrame:
@@ -65,44 +69,86 @@ def load_player_logs() -> pd.DataFrame:
     return df
 
 
-def get_player_season_rate(player_name: str, stat_col: str, logs: pd.DataFrame) -> float | None:
-    """Season average per game for a player."""
-    player_logs = logs[logs["player_name"].str.lower() == player_name.lower()]
-    if player_logs.empty:
-        last = player_name.split()[-1].lower()
-        player_logs = logs[logs["player_name"].str.lower().str.contains(last, na=False)]
-    if player_logs.empty or stat_col not in player_logs.columns:
+def _player_rows(player_name: str, logs: pd.DataFrame) -> pd.DataFrame:
+    """Exact name match, with last-name fallback ONLY when it's unambiguous.
+    A bare contains() match can silently blend two players' logs
+    (Wilson, Williams, ...), which corrupts every downstream rate."""
+    rows = logs[logs["player_name"].str.lower() == player_name.lower()]
+    if not rows.empty:
+        return rows
+    last = player_name.split()[-1].lower()
+    cand = logs[logs["player_name"].str.lower().str.contains(last, na=False)]
+    if not cand.empty and cand["player_name"].str.lower().nunique() == 1:
+        return cand
+    return cand.iloc[0:0]
+
+
+def get_player_profile(player_name: str, stat_col: str, logs: pd.DataFrame) -> dict | None:
+    """Season/recent rates, empirical std, and minutes projection for one stat.
+
+    Current-season games are preferred for the baseline: the logs span two
+    calendar years, and last year's role/team often doesn't transfer.
+    """
+    rows = _player_rows(player_name, logs)
+    if rows.empty or stat_col not in rows.columns:
         return None
-    vals = pd.to_numeric(player_logs[stat_col], errors="coerce").dropna()
-    return float(vals.mean()) if len(vals) > 0 else None
-
-
-def get_player_recent_rate(player_name: str, stat_col: str, logs: pd.DataFrame) -> float | None:
-    """Last 10 games average for a player."""
-    player_logs = logs[logs["player_name"].str.lower() == player_name.lower()]
-    if player_logs.empty:
-        last = player_name.split()[-1].lower()
-        player_logs = logs[logs["player_name"].str.lower().str.contains(last, na=False)]
-    if player_logs.empty or stat_col not in player_logs.columns:
+    rows = rows.sort_values("game_date")
+    vals = pd.to_numeric(rows[stat_col], errors="coerce")
+    rows = rows.assign(_v=vals).dropna(subset=["_v"])
+    if rows.empty:
         return None
-    recent = player_logs.sort_values("game_date").tail(RECENT_GAMES)
-    vals   = pd.to_numeric(recent[stat_col], errors="coerce").dropna()
-    return float(vals.mean()) if len(vals) >= 3 else None
+
+    year = str(_date.today().year)
+    cur  = rows[rows["game_date"].astype(str).str.startswith(year)]
+    base = cur if len(cur) >= 5 else rows
+
+    recent = rows.tail(RECENT_GAMES)
+    profile = {
+        "season_rate": float(base["_v"].mean()),
+        "recent_rate": float(recent["_v"].mean()) if len(recent) >= 3 else None,
+        "std":         float(base["_v"].std(ddof=1)) if len(base) >= 5 else None,
+        "n_games":     len(base),
+        "proj_min":    None,
+        "per_min_season": None,
+        "per_min_recent": None,
+    }
+
+    # Minutes-based projection: rate-per-minute × projected minutes is more
+    # stable than per-game averages when playing time shifts.
+    if "min" in rows.columns:
+        m = pd.to_numeric(rows["min"], errors="coerce").fillna(0.0)
+        played = rows[m > 0].assign(_m=m[m > 0])
+        if len(played) >= 5 and played["_m"].sum() > 0:
+            cur_p  = played[played["game_date"].astype(str).str.startswith(year)]
+            base_p = cur_p if len(cur_p) >= 5 else played
+            rec_p  = played.tail(RECENT_GAMES)
+            profile["per_min_season"] = float(base_p["_v"].sum() / base_p["_m"].sum())
+            profile["per_min_recent"] = float(rec_p["_v"].sum() / rec_p["_m"].sum())
+            profile["proj_min"]       = float(played["_m"].tail(5).mean())
+
+    return profile
 
 
 
 
-def prob_over_line(expected: float, line: float, stat_col: str) -> float:
-    """P(stat > line) using appropriate distribution."""
+def prob_over_line(expected: float, line: float, stat_col: str, std: float | None = None) -> float:
+    """P(stat > line).
+
+    Player stats are overdispersed (points variance runs 1.5–2× the mean), so
+    Poisson is overconfident for high-volume stats — it inflates every edge.
+    Prefer a normal with the player's own empirical std; keep Poisson only for
+    low-mean discrete stats (blocks, steals) where normal is a poor fit.
+    """
+    use_normal = std is not None and std > 0 and (stat_col in NORMAL_STATS or expected >= 3.0)
+    if use_normal:
+        return float(1 - norm.cdf(line, loc=expected, scale=max(std, 1.0)))
     if stat_col in POISSON_STATS:
         if expected <= 0:
             return 0.0
         threshold = int(np.floor(line)) + 1
         return float(1.0 - poisson.cdf(threshold - 1, mu=expected))
-    else:
-        # Normal distribution for combo/fantasy stats
-        std = max(expected * 0.35, 2.0)
-        return float(1 - norm.cdf(line, loc=expected, scale=std))
+    # No empirical std available — heuristic normal fallback
+    return float(1 - norm.cdf(line, loc=expected, scale=max(expected * 0.35, 2.0)))
 
 
 def _build_team_opponent_map(games: list[dict]) -> dict[str, str]:
@@ -175,14 +221,20 @@ def predict_props(
             _dbg["combo"] += 1
             continue
 
-        season_rate = get_player_season_rate(player_name, stat_col, logs)
-        if season_rate is None or season_rate < 0:
+        prof = get_player_profile(player_name, stat_col, logs)
+        if prof is None or prof["season_rate"] < 0:
             _dbg["no_rate"] += 1
             continue
+        season_rate = prof["season_rate"]
+        recent_rate = prof["recent_rate"]
 
-        recent_rate = get_player_recent_rate(player_name, stat_col, logs)
-
-        if recent_rate is not None:
+        # Prefer rate-per-minute × projected minutes; fall back to per-game blend
+        if prof["proj_min"] and prof["per_min_season"] is not None:
+            per_min = (RECENT_WEIGHT * prof["per_min_recent"] + SEASON_WEIGHT * prof["per_min_season"]
+                       if prof["per_min_recent"] is not None else prof["per_min_season"])
+            blended = per_min * prof["proj_min"]
+            form    = "per_min"
+        elif recent_rate is not None:
             blended = RECENT_WEIGHT * recent_rate + SEASON_WEIGHT * season_rate
             form    = "blended"
         else:
@@ -204,9 +256,12 @@ def predict_props(
         # unresolved abbreviation, or player in a future-day game), fall back to league-average
         # defensive adjustment rather than skipping — the edge calculation still works.
         opp_team = opp_map.get(player_team, "")
-        opp_pts  = get_opp_pts_allowed(opp_team, game_logs_df=team_logs_df) if opp_team else LEAGUE_AVG_DRTG
-        def_adj     = get_def_rating_adj(opp_pts)
-        blended     = max(blended * def_adj, 0.0)
+        # Scoring-defense adjustment only applies to scoring stats — opponent
+        # points allowed says nothing about rebounds/assists/steals environment.
+        if stat_col in SCORING_STATS:
+            opp_pts = get_opp_pts_allowed(opp_team, game_logs_df=team_logs_df) if opp_team else LEAGUE_AVG_DRTG
+            def_adj = get_def_rating_adj(opp_pts)
+            blended = max(blended * def_adj, 0.0)
 
         # Fix 3: Pace adjustment — scale stats by expected game pace vs league avg
         if opp_team and player_team:
@@ -228,13 +283,17 @@ def predict_props(
             _dbg["2x"] += 1
             continue
 
-        p_more = prob_over_line(blended, line, stat_col)
+        p_more = prob_over_line(blended, line, stat_col, std=prof["std"])
         p_less = 1.0 - p_more
 
+        # Edge is measured against the platform's break-even probability
+        # (e.g. ~0.577 for a 2-pick 3x), not a 50/50 coin flip.
+        breakeven = breakeven_prob(row.get("platform", ""), slip_size=2)
         if p_more >= p_less:
-            direction, model_prob, edge = "More", p_more, p_more - 0.50
+            direction, model_prob = "More", p_more
         else:
-            direction, model_prob, edge = "Less", p_less, p_less - 0.50
+            direction, model_prob = "Less", p_less
+        edge = model_prob - breakeven
 
         if edge <= 0:
             _dbg["no_edge"] += 1
@@ -260,7 +319,7 @@ def predict_props(
             "line":          line,
             "direction":     direction,
             "model_prob":    round(model_prob, 4),
-            "implied_prob":  0.50,
+            "implied_prob":  round(breakeven, 4),
             "edge":          round(edge, 4),
             "expected_rate": round(blended, 3),
             "season_rate":   round(season_rate, 3),

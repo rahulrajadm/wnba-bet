@@ -60,6 +60,13 @@ def load_data(bankroll, unit_size):
 with st.spinner("Loading picks…"):
     games, all_picks = load_data(bankroll, unit_size)
 
+# Log picks so analysis/tracking.py can grade them after the games finish
+try:
+    from analysis.tracking import save_picks
+    save_picks(all_picks)
+except Exception:
+    pass
+
 min_rank = TIER_RANK[min_conf]
 filtered = [p for p in all_picks if TIER_RANK.get(p["confidence_tier"], 0) >= min_rank]
 if platforms:

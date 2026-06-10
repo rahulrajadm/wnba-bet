@@ -46,6 +46,8 @@ def _completed_game_ids(lookback: int = LOOKBACK) -> list[str]:
         e["id"] for e in data.get("events", [])
         if e.get("competitions", [{}])[0]
             .get("status", {}).get("type", {}).get("completed")
+        # season.type 1 = preseason/exhibitions (incl. national teams) — skip
+        and e.get("season", {}).get("type", 2) != 1
     ]
 
 
@@ -69,6 +71,7 @@ def _completed_game_ids_multiseason(num_seasons: int = PLAYER_SEASONS) -> list[s
             yr_ids = [
                 e["id"] for e in data.get("events", [])
                 if e.get("competitions", [{}])[0].get("status", {}).get("type", {}).get("completed")
+                and e.get("season", {}).get("type", 2) != 1
                 and e["id"] not in seen
             ]
             for gid in yr_ids:
@@ -92,10 +95,12 @@ def _box_score_team_rows(event_id: str) -> list[dict]:
     header = data.get("header", {}).get("competitions", [{}])[0]
     game_date = header.get("date", "")[:10]
 
-    # Score by team_id from the header competitors
-    scores = {}
+    # Score / side / abbreviation by team_id from the header competitors
+    scores, sides, abbrs = {}, {}, {}
     for c in header.get("competitors", []):
         tid = str(c.get("team", {}).get("id", ""))
+        sides[tid] = c.get("homeAway", "")
+        abbrs[tid] = c.get("team", {}).get("abbreviation", "")
         try:
             scores[tid] = float(c.get("score", 0) or 0)
         except (ValueError, TypeError):
@@ -139,13 +144,20 @@ def _box_score_team_rows(event_id: str) -> list[dict]:
                     pass
 
         pts = scores.get(team_id, agg["pts"])
+        opp_pts  = next((s for tid, s in scores.items() if tid != team_id), None)
+        opp_abbr = next((a for tid, a in abbrs.items() if tid != team_id), "")
+        own_abbr = team.get("abbreviation", "")
+        # Same "vs."/"@" convention as stats.nba.com — training uses it to tag home games
+        matchup = (f"{own_abbr} vs. {opp_abbr}" if sides.get(team_id) == "home"
+                   else f"{own_abbr} @ {opp_abbr}")
         rows.append({
             "game_id":    event_id,
             "season":     str(date.today().year),
             "team_id":    team_id,
             "team_name":  team.get("displayName", ""),
-            "team_abbr":  team.get("abbreviation", ""),
+            "team_abbr":  own_abbr,
             "game_date":  game_date,
+            "matchup":    matchup,
             "wl":         "",   # filled after both teams are known
             "pts":        pts,
             "fg_pct":     round(fgm / fga, 3) if fga > 0 else 0.0,
@@ -156,7 +168,9 @@ def _box_score_team_rows(event_id: str) -> list[dict]:
             "stl":        agg["stl"],
             "blk":        agg["blk"],
             "tov":        agg["tov"],
-            "plus_minus": 0.0,
+            # Point differential — the model's strongest feature group.
+            # Must be real (not 0): the trained model learned on actual margins.
+            "plus_minus": pts - opp_pts if opp_pts is not None else 0.0,
         })
 
     # Assign W / L
@@ -196,11 +210,17 @@ def _box_score_player_rows(event_id: str) -> list[dict]:
                 "player_id":   str(athlete.get("id", "")),
                 "player_name": athlete.get("displayName", ""),
                 "team_abbr":   team_abbr,
+                "min": 0.0,
                 "pts": 0.0, "reb": 0.0, "ast": 0.0,
                 "stl": 0.0, "blk": 0.0, "tov": 0.0,
                 "fg3m": 0.0, "fgm": 0.0, "fga": 0.0,
                 "fg_pct": 0.0, "ftm": 0.0, "plus_minus": 0.0,
             }
+            if "MIN" in labels:
+                try:
+                    row["min"] = float(raw[labels.index("MIN")])
+                except (ValueError, TypeError):
+                    pass
             for lbl, col in _LABEL_MAP.items():
                 if lbl in labels:
                     try:

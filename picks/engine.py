@@ -8,6 +8,7 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pandas as pd
+from scipy.stats import norm
 from utils.db import get_conn
 from models.game import predict_game, prob_cover_spread, prob_over_total
 from models.props import predict_props
@@ -20,6 +21,12 @@ MIN_EDGE       = 0.04
 MAX_PROB       = 0.92
 MIN_PROB       = 0.08
 DEFAULT_MULT   = 3.0   # 2-pick power play baseline for props
+
+# Weight on the model vs the market line when anchoring predictions.
+# Closing lines are very efficient; a box-score model on ~2k games shouldn't
+# override them outright. 0.6 keeps the model's signal but shrinks outlier
+# predictions (which are usually model error, not edge) toward the market.
+MODEL_WEIGHT   = 0.6
 
 # Minimum line value for a "Less" pick to be considered non-trivial.
 # Below these thresholds, "Less" is near-certain and has no betting value.
@@ -104,6 +111,26 @@ def build_game_picks(games: list[dict], bankroll: float, unit_size: float, odds_
             (odds_df["away_team"].str.lower() == home.lower())
         ]
 
+        # ── Market anchoring ───────────────────────────────────────────────────
+        # Shrink the model's margin/total toward the market line before computing
+        # probabilities. Outlier disagreements with the line are usually model
+        # error, not edge; anchoring also keeps ML/spread/totals consistent.
+        sprd_odds = game_odds[game_odds["market"] == "spread"]
+        tot_odds  = game_odds[game_odds["market"] == "totals"]
+        best_sprd = sprd_odds.sort_values("home_odds", ascending=False).iloc[0] if not sprd_odds.empty else None
+        best_tot  = tot_odds.sort_values("over_odds", ascending=False).iloc[0] if not tot_odds.empty else None
+
+        pred_diff  = pred["pred_diff"]
+        pred_total = pred["pred_total"]
+        if best_sprd is not None and pd.notna(best_sprd.get("home_spread")):
+            market_diff = -float(best_sprd["home_spread"])   # home -6.5 ⇒ market expects home by 6.5
+            pred_diff   = MODEL_WEIGHT * pred_diff + (1 - MODEL_WEIGHT) * market_diff
+        if best_tot is not None and pd.notna(best_tot.get("total_line")):
+            pred_total = MODEL_WEIGHT * pred_total + (1 - MODEL_WEIGHT) * float(best_tot["total_line"])
+
+        home_win_prob = float(norm.cdf(pred_diff / pred["spread_std"]))
+        away_win_prob = 1.0 - home_win_prob
+
         # ── Moneyline ──────────────────────────────────────────────────────────
         ml_odds = game_odds[game_odds["market"] == "moneyline"]
         if not ml_odds.empty:
@@ -113,8 +140,8 @@ def build_game_picks(games: list[dict], bankroll: float, unit_size: float, odds_
                 lambda x: x if x and x > 0 else (10000 / abs(x) if x else 0)).idxmax()]
 
             for side, model_p, best_row, odds_col in [
-                (home, pred["home_win_prob"], best_home, "home_odds"),
-                (away, pred["away_win_prob"], best_away, "away_odds"),
+                (home, home_win_prob, best_home, "home_odds"),
+                (away, away_win_prob, best_away, "away_odds"),
             ]:
                 odds_val = best_row[odds_col]
                 if not odds_val:
@@ -161,11 +188,9 @@ def build_game_picks(games: list[dict], bankroll: float, unit_size: float, odds_
                 })
 
         # ── Spread ─────────────────────────────────────────────────────────────
-        sprd_odds = game_odds[game_odds["market"] == "spread"]
-        if not sprd_odds.empty and pred.get("pred_diff") is not None:
-            best_sprd = sprd_odds.sort_values("home_odds", ascending=False).iloc[0]
+        if best_sprd is not None and pred.get("pred_diff") is not None:
             spread_line = best_sprd.get("home_spread") or 0
-            p_cover   = prob_cover_spread(pred["pred_diff"], spread_line, pred["spread_std"])
+            p_cover   = prob_cover_spread(pred_diff, spread_line, pred["spread_std"])
             p_not     = 1 - p_cover
 
             for side_label, side_p, side_odds in [
@@ -212,11 +237,9 @@ def build_game_picks(games: list[dict], bankroll: float, unit_size: float, odds_
                 })
 
         # ── Totals ─────────────────────────────────────────────────────────────
-        tot_odds = game_odds[game_odds["market"] == "totals"]
-        if not tot_odds.empty and pred.get("pred_total") is not None:
-            best_tot    = tot_odds.sort_values("over_odds", ascending=False).iloc[0]
+        if best_tot is not None and pred.get("pred_total") is not None:
             total_line  = best_tot.get("total_line") or 165.0
-            p_over      = prob_over_total(pred["pred_total"], total_line, pred["totals_std"])
+            p_over      = prob_over_total(pred_total, total_line, pred["totals_std"])
             p_under     = 1 - p_over
 
             for label, side_p, side_odds in [
@@ -282,7 +305,7 @@ def build_prop_picks(bankroll: float, unit_size: float, lines_data=None, player_
         if not is_platform_realistic(fake_pick):
             continue
 
-        ev    = ev_prop(model_prob)
+        ev    = ev_prop(model_prob, pred.get("implied_prob", 0.50))
         conf  = get_confidence_tier(edge)
         risk  = get_risk_profile(pred["stat_type"], edge)
         kpct  = kelly_stake(model_prob, DEFAULT_MULT)
@@ -301,7 +324,7 @@ def build_prop_picks(bankroll: float, unit_size: float, lines_data=None, player_
             "best_platform":     pred["platform"],
             "best_odds":         None,
             "model_prob":        model_prob,
-            "implied_prob":      0.50,
+            "implied_prob":      pred.get("implied_prob", 0.50),
             "edge":              edge,
             "ev_per_100":        ev,
             "confidence_tier":   conf,
@@ -340,6 +363,11 @@ def build_picks(
         reverse=True
     )
     return all_picks
+
+
+def is_high_interest(pick: dict) -> bool:
+    """Sweet spot: confident enough to bet, not so extreme it's a trap line."""
+    return 0.55 <= pick.get("model_prob", 0) <= 0.85
 
 
 def best_props_per_player(picks: list[dict]) -> list[dict]:

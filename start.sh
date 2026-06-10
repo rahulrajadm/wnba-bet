@@ -5,6 +5,12 @@ cd "$(dirname "$0")"
 echo "🏀 WNBA Bet starting..."
 echo ""
 
+echo "🗄️  Updating game logs (current season)..."
+python pipeline/update_db.py
+
+echo "🏁 Grading yesterday's picks..."
+python analysis/tracking.py grade
+
 echo "📅 Fetching today's schedule..."
 python pipeline/schedule.py
 

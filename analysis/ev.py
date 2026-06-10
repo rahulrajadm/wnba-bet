@@ -12,6 +12,16 @@ PLATFORM_MULTIPLIERS = {
 }
 
 
+def breakeven_prob(platform: str, slip_size: int = 2) -> float:
+    """Per-leg probability needed to break even on a pick'em slip.
+
+    A 2-pick 3x slip breaks even at p² · 3 = 1 ⇒ p ≈ 0.577, NOT 0.50.
+    Measuring prop edges against 0.50 systematically overstates value.
+    """
+    mult = PLATFORM_MULTIPLIERS.get(str(platform).lower(), PRIZEPICKS_POWER).get(slip_size, 3.0)
+    return float((1.0 / mult) ** (1.0 / slip_size))
+
+
 def american_to_implied(odds: float) -> float:
     """Convert American odds to implied probability (includes vig)."""
     if odds > 0:

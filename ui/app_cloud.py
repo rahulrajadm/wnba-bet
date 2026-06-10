@@ -322,6 +322,14 @@ except Exception as _e:
     st.exception(_e)
     all_picks = []
 
+# Log picks for later grading (analysis/tracking.py). Without a graded record
+# there's no way to tell whether model changes actually help.
+try:
+    from analysis.tracking import save_picks
+    save_picks(all_picks)
+except Exception:
+    pass  # ephemeral storage on Streamlit Cloud — logging is best-effort there
+
 min_rank = TIER_RANK[min_conf]
 filtered = [p for p in all_picks if TIER_RANK.get(p["confidence_tier"], 0) >= min_rank]
 if platforms:

@@ -26,7 +26,11 @@ def load_models():
     sprd  = joblib.load(os.path.join(MODELS_DIR, "game_spread.pkl"))
     total = joblib.load(os.path.join(MODELS_DIR, "game_totals.pkl"))
     feats = joblib.load(os.path.join(MODELS_DIR, "game_feature_cols.pkl"))
-    return ml, sprd, total, feats
+    try:
+        calib = joblib.load(os.path.join(MODELS_DIR, "game_calibration.pkl"))
+    except Exception:
+        calib = {"spread_std": 12.0, "totals_std": 14.0}
+    return ml, sprd, total, feats, calib
 
 
 def get_team_rolling_stats(team_name: str, n: int = 10, game_logs_df=None) -> dict:
@@ -85,8 +89,11 @@ def build_matchup_vector(home_team: str, away_team: str, feat_cols: list[str], g
             row[f"away_{col}_last{w}"] = a.get(col, 0)
     row["home_win_pct_last10"] = home_s10.get("win_pct", 0.5)
     row["away_win_pct_last10"] = away_s10.get("win_pct", 0.5)
-    row["home_rest_days"]      = get_rest_days(home_team, game_logs_df=game_logs_df)
-    row["away_rest_days"]      = get_rest_days(away_team, game_logs_df=game_logs_df)
+    # Cap at 10 to match the training-time clip (season gaps would otherwise blow this up)
+    row["home_rest_days"]      = min(get_rest_days(home_team, game_logs_df=game_logs_df), 10.0)
+    row["away_rest_days"]      = min(get_rest_days(away_team, game_logs_df=game_logs_df), 10.0)
+    row["home_is_b2b"]         = int(row["home_rest_days"] <= 1)
+    row["away_is_b2b"]         = int(row["away_rest_days"] <= 1)
     row["rest_advantage"]      = row["home_rest_days"] - row["away_rest_days"]
     row["home_court"]          = 1
 
@@ -100,7 +107,7 @@ def build_matchup_vector(home_team: str, away_team: str, feat_cols: list[str], g
 def predict_game(home_team: str, away_team: str, game_logs_df=None) -> dict | None:
     """Generate ML, spread, and totals predictions for a matchup."""
     try:
-        ml_model, sprd_model, total_model, feat_cols = load_models()
+        ml_model, sprd_model, total_model, feat_cols, calib = load_models()
     except Exception:
         return None
 
@@ -112,13 +119,14 @@ def predict_game(home_team: str, away_team: str, game_logs_df=None) -> dict | No
     # Deriving win probability from pred_diff guarantees P(win by N+) ≤ P(win).
     # Using a separate ML classifier for win prob caused the two numbers to
     # contradict each other (e.g., 83% cover -2.5 but only 72% win outright).
-    SPREAD_STD = 12.0
+    # Stds come from holdout residuals saved at training time (game_calibration.pkl).
+    SPREAD_STD = float(calib.get("spread_std", 12.0))
+    TOTALS_STD = float(calib.get("totals_std", 14.0))
     pred_diff   = float(sprd_model.predict(X)[0])
     home_win_prob = float(norm.cdf(pred_diff / SPREAD_STD))
     away_win_prob = 1.0 - home_win_prob
 
     pred_total = float(total_model.predict(X)[0])
-    TOTALS_STD = 14.0
 
     return {
         "home_team":       home_team,

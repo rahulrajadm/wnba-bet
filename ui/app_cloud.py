@@ -365,8 +365,11 @@ for _g in data.get("games", []):
         _date = _g.get("date", "—")
         _time = "—"
     _h, _a = _g["home_team"], _g["away_team"]
-    _team_game_map[_h] = {"date": _date, "time": _time, "opp": f"vs {_a}"}
-    _team_game_map[_a] = {"date": _date, "time": _time, "opp": f"@ {_h}"}
+    # "sort" = ISO UTC tip-off, used to order tables chronologically — the
+    # display strings ("Jul 5", "9:00 PM CT") don't sort correctly as text.
+    _sort_key = _g.get("game_time", "") or "~"
+    _team_game_map[_h] = {"date": _date, "time": _time, "opp": f"vs {_a}", "sort": _sort_key}
+    _team_game_map[_a] = {"date": _date, "time": _time, "opp": f"@ {_h}", "sort": _sort_key}
 
 # Index by PrizePicks abbreviation so stale cached player_team values resolve.
 for _abbr, _full in _PP_ABBR.items():
@@ -415,6 +418,7 @@ def picks_to_df(picks, show_context=False):
             _a  = p.get("away_team", "")
             _gi = _team_game_map.get(_h) or _team_game_map_lc.get(_h.lower(), {})
             row = {
+                "_sort":      _gi.get("sort", "~"),
                 "Team":       f"{_a} @ {_h}" if _h and _a else "",
                 "Date":       _gi.get("date", "—"),
                 "Time":       _gi.get("time", "—"),
@@ -441,6 +445,7 @@ def picks_to_df(picks, show_context=False):
             _ot = p.get("odds_type", "standard")
             _ot_label = {"goblin": "🐸 goblin", "demon": "😈 demon"}.get(_ot, "standard")
             row = {
+                "_sort":      _gi.get("sort", "~"),
                 "Team":       _pt_full,
                 "Date":       _gi.get("date", "—"),
                 "Time":       _gi.get("time", "—"),
@@ -494,7 +499,7 @@ with tab1:
     show_ctx = st.toggle("Show season/recent context", value=False)
     df = picks_to_df(hi[:75], show_context=show_ctx)
     if df is not None:
-        df = df.sort_values(["Date", "Time"], key=lambda s: s.str.replace("—", "~", regex=False), kind="stable")
+        df = df.sort_values("_sort", kind="stable").drop(columns=["_sort"])
         st.dataframe(style_df(df), use_container_width=True, hide_index=True)
     elif not data["games"]:
         st.warning("No upcoming games found. The Odds API hasn't posted lines yet — try refreshing later in the day.")
@@ -643,7 +648,7 @@ with tab3:
     df = picks_to_df(filtered_props[:75], show_context=True)
     if df is not None:
         df = df.drop(columns=["Type", "Odds"], errors="ignore")
-        df = df.sort_values(["Date", "Time"], key=lambda s: s.str.replace("—", "~", regex=False), kind="stable")
+        df = df.sort_values("_sort", kind="stable").drop(columns=["_sort"])
         st.dataframe(style_df(df), use_container_width=True, hide_index=True)
     elif not data["games"]:
         st.warning("No upcoming games found — no opponent context to generate props.")
@@ -710,10 +715,14 @@ with tab5:
         st.subheader("PrizePicks Slip Builder")
         st.caption("Select 2–6 prop picks to calculate slip EV.")
         prop_hi   = [p for p in hi if p["pick_type"] == "prop"]
-        slip_opts = [p["selection"] for p in prop_hi[:30]]
-        selected  = st.multiselect("Select picks:", slip_opts, max_selections=6)
+        # One entry per selection string — the same player/stat/line can appear
+        # on both platforms, and duplicates would double-count a leg's prob.
+        slip_map: dict[str, float] = {}
+        for p in prop_hi[:30]:
+            slip_map.setdefault(p["selection"], p["model_prob"])
+        selected  = st.multiselect("Select picks:", list(slip_map), max_selections=6)
         if len(selected) >= 2:
-            probs  = [p["model_prob"] for sel in selected for p in prop_hi if p["selection"] == sel]
+            probs  = [slip_map[sel] for sel in selected]
             result = ev_slip(probs, "prizepicks", len(selected))
             if result:
                 st.metric("Slip Size",   f"{len(selected)}-pick Power Play")

@@ -291,10 +291,14 @@ with tab5:
         st.subheader("PrizePicks Slip Builder")
         st.caption("Select 2–6 prop picks to calculate slip EV.")
         prop_hi   = [p for p in hi if p["pick_type"] == "prop"]
-        slip_opts = [p["selection"] for p in prop_hi[:30]]
-        selected  = st.multiselect("Select picks:", slip_opts, max_selections=6)
+        # One entry per selection string — the same player/stat/line can appear
+        # on both platforms, and duplicates would double-count a leg's prob.
+        slip_map: dict[str, float] = {}
+        for p in prop_hi[:30]:
+            slip_map.setdefault(p["selection"], p["model_prob"])
+        selected  = st.multiselect("Select picks:", list(slip_map), max_selections=6)
         if len(selected) >= 2:
-            probs  = [p["model_prob"] for sel in selected for p in prop_hi if p["selection"] == sel]
+            probs  = [slip_map[sel] for sel in selected]
             result = ev_slip(probs, "prizepicks", len(selected))
             if result:
                 st.metric("Slip Size",   f"{len(selected)}-pick Power Play")

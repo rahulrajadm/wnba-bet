@@ -46,6 +46,11 @@ LESS_MIN_LINE: dict[str, float] = {
     "Rebs+Asts":        6.5,
     "Blks+Stls":        2.5,
     "Fantasy Score":   18.5,
+    "Pts + Rebs + Asts":  15.5,
+    "Points + Rebounds":  12.5,
+    "Points + Assists":   12.5,
+    "Rebounds + Assists":  6.5,
+    "Blocks + Steals":     2.5,
 }
 
 # Minimum line for a "More" pick to be non-trivial.
@@ -66,6 +71,11 @@ MORE_MIN_LINE: dict[str, float] = {
     "Rebs+Asts":        3.5,
     "Blks+Stls":        1.5,
     "Fantasy Score":   12.5,
+    "Pts + Rebs + Asts":  10.5,
+    "Points + Rebounds":   9.5,
+    "Points + Assists":    9.5,
+    "Rebounds + Assists":  3.5,
+    "Blocks + Steals":     1.5,
 }
 
 

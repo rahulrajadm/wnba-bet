@@ -1,8 +1,11 @@
 """Risk profile assignment for WNBA picks."""
 
-HIGH_VARIANCE_STATS  = {"Steals", "Blocked Shots", "Blks+Stls", "3-PT Made", "3-Pointers Made", "3-PT Made (Combo)"}
-MEDIUM_VARIANCE_STATS = {"Rebounds", "Assists", "Pts+Rebs", "Pts+Asts", "Rebs+Asts", "Turnovers", "Free Throws Made"}
-LOW_VARIANCE_STATS   = {"Points", "Pts+Rebs+Asts", "Fantasy Score", "Points (Combo)"}
+HIGH_VARIANCE_STATS  = {"Steals", "Blocked Shots", "Blks+Stls", "Blocks + Steals",
+                        "3-PT Made", "3-Pointers Made", "3-PT Made (Combo)"}
+MEDIUM_VARIANCE_STATS = {"Rebounds", "Assists", "Pts+Rebs", "Pts+Asts", "Rebs+Asts",
+                         "Points + Rebounds", "Points + Assists", "Rebounds + Assists",
+                         "Turnovers", "Free Throws Made"}
+LOW_VARIANCE_STATS   = {"Points", "Pts+Rebs+Asts", "Pts + Rebs + Asts", "Fantasy Score", "Points (Combo)"}
 
 # Game pick risk profiles
 GAME_RISK = {

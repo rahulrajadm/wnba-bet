@@ -75,6 +75,7 @@ def fetch_wnba_lines() -> list[dict]:
             "line":              float(ou_line) if ou_line is not None else None,
             "game_id":           str(match_id),
             "allowed_direction": allowed,
+            "odds_type":         "standard",
             "more_odds":         None,
             "less_odds":         None,
         })

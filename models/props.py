@@ -11,7 +11,7 @@ import numpy as np
 from datetime import date as _date, datetime as _datetime
 from scipy.stats import poisson, norm
 from utils.db import get_conn
-from pipeline.team_metrics import get_opp_pts_allowed, get_game_pace_factor, get_def_rating_adj
+from pipeline.team_metrics import get_opp_pts_allowed, get_game_pace_factor, get_def_rating_adj, LEAGUE_AVG_TEAM_PTS
 from analysis.ev import breakeven_prob
 
 RECENT_GAMES    = 10
@@ -19,7 +19,6 @@ RECENT_WEIGHT   = 0.55
 SEASON_WEIGHT   = 0.45
 
 LEAGUE_AVG_PACE = 95.0    # WNBA possessions per 40 min (approx)
-LEAGUE_AVG_DRTG = 100.0   # league average defensive rating
 
 # Maps platform stat names → internal stat column
 STAT_MAP = {
@@ -35,6 +34,12 @@ STAT_MAP = {
     "Pts+Asts":                "pts_ast",
     "Rebs+Asts":               "reb_ast",
     "Blks+Stls":               "blk_stl",
+    # Underdog spells combos with spaces
+    "Pts + Rebs + Asts":       "pra",
+    "Points + Rebounds":       "pts_reb",
+    "Points + Assists":        "pts_ast",
+    "Rebounds + Assists":      "reb_ast",
+    "Blocks + Steals":         "blk_stl",
     "Fantasy Score":           "fantasy",
     "Points (Combo)":          "pts",
     "Rebounds (Combo)":        "reb",
@@ -259,7 +264,9 @@ def predict_props(
         # Scoring-defense adjustment only applies to scoring stats — opponent
         # points allowed says nothing about rebounds/assists/steals environment.
         if stat_col in SCORING_STATS:
-            opp_pts = get_opp_pts_allowed(opp_team, game_logs_df=team_logs_df) if opp_team else LEAGUE_AVG_DRTG
+            # Fallback must be on the pts-allowed scale (~82), not a 100-based
+            # rating — 100 here reads as "terrible defense" and boosts the rate.
+            opp_pts = get_opp_pts_allowed(opp_team, game_logs_df=team_logs_df) if opp_team else LEAGUE_AVG_TEAM_PTS
             def_adj = get_def_rating_adj(opp_pts)
             blended = max(blended * def_adj, 0.0)
 

@@ -199,6 +199,13 @@ def predict_props(
         lines = pd.read_sql("SELECT * FROM prop_lines WHERE DATE(fetched_at) = DATE('now')", conn)
         conn.close()
 
+    # DBs written before these columns existed load without them; default so the
+    # dedupe below and the direction filter don't KeyError on the SQLite path.
+    if "odds_type" not in lines.columns:
+        lines["odds_type"] = "standard"
+    if "allowed_direction" not in lines.columns:
+        lines["allowed_direction"] = None
+
     lines = lines.sort_values("fetched_at", ascending=False).drop_duplicates(
         subset=["platform", "player_name", "stat_type", "odds_type"]
     )

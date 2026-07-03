@@ -9,6 +9,41 @@ def get_conn():
     return sqlite3.connect(DB_PATH)
 
 
+# Columns added after the original schema shipped. Existing local DBs predate
+# them, so writers call ensure_schema() before INSERTing these columns.
+_PROP_LINE_MIGRATIONS = (
+    ("odds_type",         "TEXT DEFAULT 'standard'"),
+    ("allowed_direction", "TEXT"),
+)
+
+
+def ensure_schema(conn):
+    """Additive, idempotent migrations for DBs created before newer columns existed."""
+    for col, typ in _PROP_LINE_MIGRATIONS:
+        try:
+            conn.execute(f"ALTER TABLE prop_lines ADD COLUMN {col} {typ}")
+        except sqlite3.OperationalError:
+            pass  # column already exists
+    conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
+    conn.commit()
+
+
+def set_meta(key: str, value: str):
+    conn = get_conn()
+    ensure_schema(conn)
+    conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, str(value)))
+    conn.commit()
+    conn.close()
+
+
+def get_meta(key: str) -> str | None:
+    conn = get_conn()
+    ensure_schema(conn)
+    row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+    conn.close()
+    return row[0] if row else None
+
+
 def init_db():
     conn = get_conn()
     c = conn.cursor()
@@ -124,7 +159,9 @@ def init_db():
             stat_type TEXT,
             line REAL,
             more_odds REAL,
-            less_odds REAL
+            less_odds REAL,
+            odds_type TEXT DEFAULT 'standard',
+            allowed_direction TEXT
         );
 
         CREATE TABLE IF NOT EXISTS picks (
@@ -143,8 +180,14 @@ def init_db():
             units REAL,
             details TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS meta (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        );
     """)
 
+    ensure_schema(conn)
     conn.commit()
     conn.close()
     print("WNBA database initialized.")

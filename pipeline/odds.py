@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import requests
 from datetime import datetime, timezone
 from dotenv import load_dotenv
-from utils.db import get_conn
+from utils.db import get_conn, set_meta
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "../.env"))
 
@@ -30,7 +30,10 @@ def fetch_odds(market: str) -> list[dict]:
     }
     resp = requests.get(url, params=params, timeout=15)
     resp.raise_for_status()
-    print(f"  Odds API requests remaining: {resp.headers.get('x-requests-remaining', 'N/A')}")
+    remaining = resp.headers.get("x-requests-remaining")
+    print(f"  Odds API requests remaining: {remaining or 'N/A'}")
+    if remaining is not None:
+        set_meta("odds_api_remaining", remaining)
     return resp.json()
 
 

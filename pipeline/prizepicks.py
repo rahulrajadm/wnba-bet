@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import requests
 from datetime import datetime, timezone
-from utils.db import get_conn
+from utils.db import get_conn, ensure_schema
 
 PRIZEPICKS_URL  = "https://api.prizepicks.com/projections"
 WNBA_LEAGUE_ID  = 3
@@ -85,12 +85,15 @@ def fetch_wnba_lines() -> list[dict]:
 
 def save_lines(props: list[dict]):
     conn = get_conn()
+    ensure_schema(conn)
     c    = conn.cursor()
     for p in props:
         c.execute("""
             INSERT INTO prop_lines
-            (fetched_at, platform, game_id, player_name, player_team, stat_type, line, more_odds, less_odds)
-            VALUES (:fetched_at, :platform, :game_id, :player_name, :player_team, :stat_type, :line, :more_odds, :less_odds)
+            (fetched_at, platform, game_id, player_name, player_team, stat_type, line, more_odds, less_odds,
+             odds_type, allowed_direction)
+            VALUES (:fetched_at, :platform, :game_id, :player_name, :player_team, :stat_type, :line, :more_odds, :less_odds,
+                    :odds_type, :allowed_direction)
         """, p)
     conn.commit()
     conn.close()

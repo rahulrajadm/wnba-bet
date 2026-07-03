@@ -33,6 +33,11 @@ def fetch_today_games(game_date: str = None) -> list[dict]:
         resp.raise_for_status()
         data   = resp.json()
 
+        remaining = resp.headers.get("x-requests-remaining")
+        if remaining is not None:
+            from utils.db import set_meta
+            set_meta("odds_api_remaining", remaining)
+
         games = []
         for g in data:
             game_dt = g.get("commence_time", "")[:10]
@@ -67,6 +72,29 @@ def save_schedule(games: list[dict]):
         """, g)
     conn.commit()
     conn.close()
+
+
+def load_saved_games(game_date: str = None) -> list[dict]:
+    """Read today's/tomorrow's games from SQLite without touching the Odds API.
+
+    fetch_today_games() costs an Odds API credit per call, so UI code that
+    reloads periodically should read the saved schedule and leave live fetches
+    to the explicit Refresh action (or start.sh).
+    """
+    from datetime import timedelta
+    if game_date is None:
+        game_date = date.today().isoformat()
+    tomorrow = (date.fromisoformat(game_date) + timedelta(days=1)).isoformat()
+
+    conn = get_conn()
+    rows = conn.execute(
+        """SELECT game_id, date, home_team, away_team, home_team_id, away_team_id, game_time, season
+           FROM games WHERE date IN (?, ?) ORDER BY game_time""",
+        (game_date, tomorrow),
+    ).fetchall()
+    conn.close()
+    cols = ["game_id", "date", "home_team", "away_team", "home_team_id", "away_team_id", "game_time", "season"]
+    return [dict(zip(cols, r)) for r in rows]
 
 
 def get_today_games(game_date: str = None) -> list[dict]:

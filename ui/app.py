@@ -21,6 +21,7 @@ from picks.engine import build_picks, best_props_per_player, is_high_interest, M
 from analysis.confidence import TIER_COLORS, TIER_RANK
 from analysis.risk import RISK_COLORS
 from analysis.ev import ev_slip
+from analysis.explain import find_target, render_prop, render_game, NO_MATCH_MSG
 
 st.set_page_config(page_title="WNBA Bet", page_icon="🏀", layout="wide", initial_sidebar_state="expanded")
 
@@ -276,12 +277,13 @@ def picks_to_df(picks, show_context=False):
 # ── Header (rendered once, above the tabs) ─────────────────────────────────────
 timestamp_bar()
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "🔥 Top Picks",
     "🏀 Game Predictions",
     "🎯 Player Props",
     "📊 Platform Comparison",
     "💰 Bankroll Tracker",
+    "💬 Ask Why",
 ])
 
 # ── Tab 1: Top Picks ───────────────────────────────────────────────────────────
@@ -346,6 +348,7 @@ with tab2:
                 "diff": diff, "total": total, "spread_line": sl, "total_line": tl,
                 "home_p": float(norm.cdf(diff / _pred["spread_std"])),
                 "spread_std": _pred["spread_std"], "totals_std": _pred["totals_std"],
+                "raw_diff": _pred["pred_diff"], "raw_total": _pred["pred_total"],
             }
         return views
 
@@ -563,3 +566,36 @@ with tab5:
             st.info("Select at least 2 picks.")
         else:
             st.info("Select picks above to build a slip.")
+
+# ── Tab 6: Ask Why ─────────────────────────────────────────────────────────────
+with tab6:
+    st.caption(
+        "Ask how the model reached a number — every step of the actual arithmetic, no AI involved. "
+        "Try: *why does Breanna Stewart Rebs+Asts More 8.5 have 85%?* or "
+        "*Chicago Sky @ Las Vegas Aces over 179.5*"
+    )
+
+    if "ask_history" not in st.session_state:
+        st.session_state.ask_history = []
+
+    for q_msg, a_msg in st.session_state.ask_history:
+        with st.chat_message("user"):
+            st.markdown(q_msg)
+        with st.chat_message("assistant"):
+            st.markdown(a_msg)
+
+    question = st.chat_input("Why does … have …%?")
+    if question:
+        # Match against ALL picks (pre-filter) so sidebar filters never hide an answer
+        target = find_target(question, all_picks, games, views)
+        if target is None:
+            answer = NO_MATCH_MSG
+        elif target["kind"] == "prop":
+            answer = render_prop(target["pick"])
+        else:
+            answer = render_game(target["game"], target["market"], target["picks"], target["view"])
+        st.session_state.ask_history.append((question, answer))
+        with st.chat_message("user"):
+            st.markdown(question)
+        with st.chat_message("assistant"):
+            st.markdown(answer)

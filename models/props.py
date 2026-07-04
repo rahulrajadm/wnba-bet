@@ -241,6 +241,7 @@ def predict_props(
         recent_rate = prof["recent_rate"]
 
         # Prefer rate-per-minute × projected minutes; fall back to per-game blend
+        per_min = None
         if prof["proj_min"] and prof["per_min_season"] is not None:
             per_min = (RECENT_WEIGHT * prof["per_min_recent"] + SEASON_WEIGHT * prof["per_min_season"]
                        if prof["per_min_recent"] is not None else prof["per_min_season"])
@@ -252,6 +253,7 @@ def predict_props(
         else:
             blended = season_rate
             form    = "season_only"
+        base_rate = blended  # pre-adjustment baseline, kept for the explain payload
 
         player_team = row.get("player_team", "")
 
@@ -270,6 +272,7 @@ def predict_props(
         opp_team = opp_map.get(player_team, "")
         # Scoring-defense adjustment only applies to scoring stats — opponent
         # points allowed says nothing about rebounds/assists/steals environment.
+        opp_pts = def_adj = None
         if stat_col in SCORING_STATS:
             # Fallback must be on the pts-allowed scale (~82), not a 100-based
             # rating — 100 here reads as "terrible defense" and boosts the rate.
@@ -283,7 +286,8 @@ def predict_props(
         else:
             pace_factor = 1.0
         # Pace only affects counting stats (pts, reb, ast, combo stats)
-        if stat_col in POISSON_STATS | NORMAL_STATS:
+        pace_applied = stat_col in POISSON_STATS | NORMAL_STATS
+        if pace_applied:
             blended = max(blended * pace_factor, 0.0)
 
         if blended <= 0:
@@ -325,6 +329,16 @@ def predict_props(
 
         _dbg["passed"] += 1
 
+        # Mirrors prob_over_line()'s branch so explanations name the actual
+        # distribution used — keep in sync if that function changes.
+        std = prof["std"]
+        if std is not None and std > 0 and (stat_col in NORMAL_STATS or blended >= 3.0):
+            dist = "normal"
+        elif stat_col in POISSON_STATS:
+            dist = "poisson"
+        else:
+            dist = "normal_heuristic"
+
         predictions.append({
             "platform":      row["platform"],
             "player_name":   player_name,
@@ -341,6 +355,25 @@ def predict_props(
             "form_source":   form,
             "game_id":       row.get("game_id", ""),
             "odds_type":     row.get("odds_type", "standard"),
+            # Every input to the probability, for the "why?" breakdown in the UI.
+            "explain": {
+                "form_source":    form,
+                "per_min_season": prof["per_min_season"],
+                "per_min_recent": prof["per_min_recent"],
+                "per_min":        round(per_min, 4) if per_min is not None else None,
+                "proj_min":       prof["proj_min"],
+                "n_games":        prof["n_games"],
+                "base_rate":      round(base_rate, 3),
+                "opponent":       opp_team,
+                "opp_pts":        opp_pts,
+                "def_adj":        def_adj,
+                "pace_factor":    pace_factor if pace_applied else None,
+                "expected":       round(blended, 3),
+                "std":            round(std, 3) if std is not None else None,
+                "dist":           dist,
+                "p_more":         round(p_more, 4),
+                "breakeven":      round(breakeven, 4),
+            },
         })
 
     top_unk = sorted(_dbg["_unk"].items(), key=lambda x: -x[1])[:10]

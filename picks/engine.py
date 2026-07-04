@@ -132,14 +132,30 @@ def build_game_picks(games: list[dict], bankroll: float, unit_size: float, odds_
 
         pred_diff  = pred["pred_diff"]
         pred_total = pred["pred_total"]
+        market_diff = market_total = None
         if best_sprd is not None and pd.notna(best_sprd.get("home_spread")):
             market_diff = -float(best_sprd["home_spread"])   # home -6.5 ⇒ market expects home by 6.5
             pred_diff   = MODEL_WEIGHT * pred_diff + (1 - MODEL_WEIGHT) * market_diff
         if best_tot is not None and pd.notna(best_tot.get("total_line")):
-            pred_total = MODEL_WEIGHT * pred_total + (1 - MODEL_WEIGHT) * float(best_tot["total_line"])
+            market_total = float(best_tot["total_line"])
+            pred_total   = MODEL_WEIGHT * pred_total + (1 - MODEL_WEIGHT) * market_total
 
         home_win_prob = float(norm.cdf(pred_diff / pred["spread_std"]))
         away_win_prob = 1.0 - home_win_prob
+
+        # Every input to the game probabilities, for the "why?" breakdown in the UI.
+        game_explain = {
+            "raw_diff":    round(pred["pred_diff"], 2),
+            "raw_total":   round(pred["pred_total"], 2),
+            "market_diff": market_diff,
+            "market_total": market_total,
+            "anch_diff":   round(pred_diff, 2),
+            "anch_total":  round(pred_total, 2),
+            "spread_std":  round(pred["spread_std"], 2),
+            "totals_std":  round(pred["totals_std"], 2),
+            "home_win_prob": round(home_win_prob, 4),
+            "model_weight": MODEL_WEIGHT,
+        }
 
         # ── Moneyline ──────────────────────────────────────────────────────────
         ml_odds = game_odds[game_odds["market"] == "moneyline"]
@@ -195,6 +211,7 @@ def build_game_picks(games: list[dict], bankroll: float, unit_size: float, odds_
                     "line":              None,
                     "player_name":       "",
                     "platform":          best_row["platform"],
+                    "explain":           game_explain,
                 })
 
         # ── Spread ─────────────────────────────────────────────────────────────
@@ -244,6 +261,7 @@ def build_game_picks(games: list[dict], bankroll: float, unit_size: float, odds_
                     "line":              spread_line,
                     "player_name":       "",
                     "platform":          best_sprd["platform"],
+                    "explain":           game_explain,
                 })
 
         # ── Totals ─────────────────────────────────────────────────────────────
@@ -293,6 +311,7 @@ def build_game_picks(games: list[dict], bankroll: float, unit_size: float, odds_
                     "line":              total_line,
                     "player_name":       "",
                     "platform":          best_tot["platform"],
+                    "explain":           game_explain,
                 })
 
     return picks
@@ -350,6 +369,7 @@ def build_prop_picks(bankroll: float, unit_size: float, lines_data=None, player_
             "home_team":         "",
             "away_team":         "",
             "odds_type":         pred.get("odds_type", "standard"),
+            "explain":           pred.get("explain", {}),
         })
 
     return picks

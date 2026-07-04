@@ -372,8 +372,8 @@ _team_game_map: dict[str, dict] = {}
 for _g in data.get("games", []):
     try:
         _ct   = datetime.fromisoformat(_g["game_time"].replace("Z", "+00:00")).astimezone(ZoneInfo("America/Chicago"))
-        _date = _ct.strftime("%b %d")
-        _time = _ct.strftime("%-I:%M %p CT")
+        _date = _ct.strftime("%b %-d")
+        _time = _ct.strftime("%-I:%M %p")
     except Exception:
         _date = _g.get("date", "—")
         _time = "—"
@@ -405,6 +405,22 @@ def timestamp_bar(fetched_at: str):
     )
 
 
+def metric_chips(items: list[tuple[str, str]]):
+    """Compact inline stat chips — unlike st.metric they don't stack into a
+    full screen of giant numbers on mobile."""
+    chips = "".join(
+        f"<div style='background:#1a1d27;border:1px solid #2a2e3d;border-radius:8px;"
+        f"padding:6px 14px;display:flex;gap:8px;align-items:baseline'>"
+        f"<span style='color:#9ca3af;font-size:0.8rem'>{label}</span>"
+        f"<strong style='color:#e8eaf0;font-size:1.15rem'>{value}</strong></div>"
+        for label, value in items
+    )
+    st.markdown(
+        f"<div style='display:flex;gap:10px;flex-wrap:wrap;margin:6px 0 10px 0'>{chips}</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def style_df(df):
     def color_conf(val):
         colors = {"STRONG": "background-color:#16a34a;color:#fff;font-weight:700",
@@ -417,64 +433,74 @@ def style_df(df):
                   "MEDIUM": "background-color:#c2410c;color:#fff;font-weight:700",
                   "HIGH":   "background-color:#dc2626;color:#fff;font-weight:700"}
         return colors.get(val, "")
-    style_fn = df.style.map if hasattr(df.style, "map") else df.style.applymap
-    styled = style_fn(color_conf, subset=["Confidence"])
-    style_fn2 = styled.map if hasattr(styled, "map") else styled.applymap
-    return style_fn2(color_risk, subset=["Risk"])
+    def color_edge(val):
+        try:
+            v = float(str(val).replace("%", "").replace("+", ""))
+        except ValueError:
+            return ""
+        if v >= 15:
+            return "color:#4ade80;font-weight:700"
+        if v >= 8:
+            return "color:#86efac;font-weight:600"
+        return "color:#bbf7d0"
+    styled = df.style
+    style_fn = styled.map if hasattr(styled, "map") else styled.applymap
+    for col, fn in (("Conf", color_conf), ("Risk", color_risk), ("Edge", color_edge)):
+        if col in df.columns:
+            styled = style_fn(fn, subset=[col])
+            style_fn = styled.map if hasattr(styled, "map") else styled.applymap
+    return styled
+
+
+def _prop_game_info(p: dict) -> dict:
+    _pt      = p.get("player_team", "")
+    _pt_full = _PP_ABBR.get(_pt, _pt)   # expand abbrev → full name
+    return (_team_game_map.get(_pt)
+            or _team_game_map.get(_pt_full)
+            or _team_game_map_lc.get(_pt_full.lower(), {}))
 
 
 def picks_to_df(picks, show_context=False):
     rows = []
     for p in picks:
         if p["pick_type"] == "game":
-            _h  = p.get("home_team", "")
-            _a  = p.get("away_team", "")
-            _gi = _team_game_map.get(_h) or _team_game_map_lc.get(_h.lower(), {})
+            _gi = _team_game_map.get(p.get("home_team", "")) \
+                  or _team_game_map_lc.get(p.get("home_team", "").lower(), {})
             row = {
-                "_sort":      _gi.get("sort", "~"),
-                "Team":       f"{_a} @ {_h}" if _h and _a else "",
-                "Date":       _gi.get("date", "—"),
-                "Time":       _gi.get("time", "—"),
-                "Type":       p["market"],
-                "Selection":  p["selection"],
-                "Line Type":  "",
-                "Platform":   p["best_platform"],
-                "Odds":       f"{int(p['best_odds']):+d}" if p.get("best_odds") else "—",
-                "Model %":    f"{p['model_prob']:.1%}",
-                "Edge":       f"{p['edge']:+.1%}",
-                "EV / $100":  f"${p['ev_per_100']:+.1f}",
-                "Confidence": p["confidence_tier"],
-                "Risk":       p["risk_profile"],
-                "Units":      f"{p.get('units', 0):.1f}u",
-                "Stake ($)":  f"${p['stake_dollars']:.0f}",
-                "Win ($)":    f"${p['potential_win']:.0f}",
+                "_sort":     _gi.get("sort", "~"),
+                "Game":      f"{p.get('away_team','')} @ {p.get('home_team','')}",
+                "Tip":       f"{_gi.get('date', '—')} {_gi.get('time', '—')}",
+                "Selection": f"{p['market']}: {p['selection']}",
+                "Platform":  p["best_platform"],
+                "Odds":      f"{int(p['best_odds']):+d}" if p.get("best_odds") else "—",
+                "Model %":   f"{p['model_prob']:.1%}",
+                "Edge":      f"{p['edge']:+.1%}",
+                "EV/$100":   f"${p['ev_per_100']:+.1f}",
+                "Conf":      p["confidence_tier"],
+                "Risk":      p["risk_profile"],
+                "Stake":     f"${p['stake_dollars']:.0f}",
+                "Win":       f"${p['potential_win']:.0f}",
             }
         else:
-            _pt      = p.get("player_team", "")
-            _pt_full = _PP_ABBR.get(_pt, _pt)   # expand abbrev → full name
-            _gi      = (_team_game_map.get(_pt)
-                        or _team_game_map.get(_pt_full)
-                        or _team_game_map_lc.get(_pt_full.lower(), {}))
+            _gi = _prop_game_info(p)
             _ot = p.get("odds_type", "standard")
-            _ot_label = {"goblin": "🐸 goblin", "demon": "😈 demon"}.get(_ot, "standard")
+            sel = f"{p['player_name']} {p['stat_type']} {p['direction']} {p['line']}"
+            if _ot in ("goblin", "demon"):
+                sel += {"goblin": " 🐸", "demon": " 😈"}[_ot]
             row = {
-                "_sort":      _gi.get("sort", "~"),
-                "Team":       _pt_full,
-                "Date":       _gi.get("date", "—"),
-                "Time":       _gi.get("time", "—"),
-                "Type":       "Prop",
-                "Selection":  f"{p['player_name']} {p['stat_type']} {p['direction']} {p['line']}",
-                "Line Type":  _ot_label,
-                "Platform":   p["platform"],
-                "Odds":       "—",
-                "Model %":    f"{p['model_prob']:.1%}",
-                "Edge":       f"{p['edge']:+.1%}",
-                "EV / $100":  f"${p['ev_per_100']:+.1f}",
-                "Confidence": p["confidence_tier"],
-                "Risk":       p["risk_profile"],
-                "Units":      f"{p.get('units', 0):.1f}u",
-                "Stake ($)":  f"${p['stake_dollars']:.0f}",
-                "Win ($)":    f"${p['potential_win']:.0f}",
+                "_sort":     _gi.get("sort", "~"),
+                "Game":      _gi.get("opp", "—"),
+                "Tip":       f"{_gi.get('date', '—')} {_gi.get('time', '—')}",
+                "Selection": sel,
+                "Platform":  p["platform"],
+                "Odds":      None,   # props have no American odds — dropped below
+                "Model %":   f"{p['model_prob']:.1%}",
+                "Edge":      f"{p['edge']:+.1%}",
+                "EV/$100":   f"${p['ev_per_100']:+.1f}",
+                "Conf":      p["confidence_tier"],
+                "Risk":      p["risk_profile"],
+                "Stake":     f"${p['stake_dollars']:.0f}",
+                "Win":       f"${p['potential_win']:.0f}",
             }
         if show_context and p["pick_type"] == "prop":
             row["Season"] = f"{p.get('season_rate', 0):.2f}" if p.get("season_rate") is not None else "—"
@@ -482,10 +508,18 @@ def picks_to_df(picks, show_context=False):
         rows.append(row)
     if not rows:
         return None
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows).sort_values("_sort", kind="stable").drop(columns=["_sort"])
+    # Odds only exists for game picks; drop the column when it would be all "—"
+    if df["Odds"].isna().all():
+        df = df.drop(columns=["Odds"])
+    else:
+        df["Odds"] = df["Odds"].fillna("—")
+    return df
 
 
 # ── Tabs ───────────────────────────────────────────────────────────────────────
+
+timestamp_bar(data["fetched_at"])
 
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "🔥 Top Picks",
@@ -499,21 +533,18 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 # ── Tab 1: Top Picks ───────────────────────────────────────────────────────────
 
 with tab1:
-    timestamp_bar(data["fetched_at"])
-    st.header("🔥 Top Picks")
-    st.caption("Game picks (ML/Spread/Totals) + high-interest player props, ranked by EV.")
+    st.caption("Game picks (ML/Spread/Totals) + high-interest player props, ranked by EV. Tip times in CT.")
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total",      len(hi))
-    c2.metric("Game Picks", sum(1 for p in hi if p["pick_type"] == "game"))
-    c3.metric("Props",      sum(1 for p in hi if p["pick_type"] == "prop"))
-    c4.metric("STRONG",     sum(1 for p in hi if p["confidence_tier"] == "STRONG"))
+    metric_chips([
+        ("Total",      str(len(hi))),
+        ("Game Picks", str(sum(1 for p in hi if p["pick_type"] == "game"))),
+        ("Prop Picks", str(sum(1 for p in hi if p["pick_type"] == "prop"))),
+        ("STRONG",     str(sum(1 for p in hi if p["confidence_tier"] == "STRONG"))),
+    ])
 
-    st.divider()
     show_ctx = st.toggle("Show season/recent context", value=False)
     df = picks_to_df(hi[:75], show_context=show_ctx)
     if df is not None:
-        df = df.sort_values("_sort", kind="stable").drop(columns=["_sort"])
         st.dataframe(style_df(df), use_container_width=True, hide_index=True)
     elif not data["games"]:
         st.warning("No upcoming games found. The Odds API hasn't posted lines yet — try refreshing later in the day.")
@@ -525,9 +556,6 @@ with tab1:
 # ── Tab 2: Game Predictions ────────────────────────────────────────────────────
 
 with tab2:
-    timestamp_bar(data["fetched_at"])
-    st.header("🏀 Game Predictions")
-
     game_picks = [p for p in best if p["pick_type"] == "game"]
     games_list = data["games"]
 
@@ -652,9 +680,6 @@ with tab2:
 # ── Tab 3: Player Props ────────────────────────────────────────────────────────
 
 with tab3:
-    timestamp_bar(data["fetched_at"])
-    st.header("🎯 Player Props")
-
     prop_picks = [p for p in hi if p["pick_type"] == "prop"]
     stat_types = sorted(set(p["stat_type"] for p in prop_picks))
     sel_stats  = st.multiselect("Filter by stat:", stat_types, default=[], key="prop_stats")
@@ -662,9 +687,11 @@ with tab3:
 
     df = picks_to_df(filtered_props[:75], show_context=True)
     if df is not None:
-        df = df.drop(columns=["Type", "Odds"], errors="ignore")
-        df = df.sort_values("_sort", kind="stable").drop(columns=["_sort"])
+        # Analysis view — staking columns live in Top Picks / Bankroll, dropping
+        # them here keeps the Season/Recent context on screen.
+        df = df.drop(columns=["Tip", "EV/$100", "Stake", "Win"], errors="ignore")
         st.dataframe(style_df(df), use_container_width=True, hide_index=True)
+        st.caption("**Season/Recent** = the player's per-game average for this stat (full season vs last 5).")
     elif not data["games"]:
         st.warning("No upcoming games found — no opponent context to generate props.")
     elif not [p for p in all_picks if p["pick_type"] == "prop"]:
@@ -675,58 +702,82 @@ with tab3:
 # ── Tab 4: Platform Comparison ─────────────────────────────────────────────────
 
 with tab4:
-    timestamp_bar(data["fetched_at"])
-    st.header("📊 Platform Comparison")
     st.caption("Same player-prop across PrizePicks and Underdog side-by-side.")
 
     search     = st.text_input("Search player…", "")
     prop_all   = [p for p in filtered if p["pick_type"] == "prop"]
     grouped    = defaultdict(list)
     for p in prop_all:
+        # Goblin/demon lines are deliberately shifted; comparing them against the
+        # other platform's standard line isn't apples-to-apples.
+        if p.get("odds_type", "standard") != "standard":
+            continue
         grouped[(p["player_name"], p["stat_type"])].append(p)
 
-    items = [(k, v) for k, v in grouped.items() if len(v) > 1]
+    items = []
+    for key, plist in grouped.items():
+        if len({p["platform"] for p in plist}) < 2:
+            continue
+        # Same stat but far-apart lines = different market (standard vs alternate),
+        # not a real cross-platform discrepancy.
+        lines_vals = [p["line"] for p in plist]
+        if max(lines_vals) - min(lines_vals) > 1.5:
+            continue
+        items.append((key, plist))
     if search:
         items = [i for i in items if search.lower() in i[0][0].lower()]
 
     if not items:
-        st.info("No cross-platform comparisons available.")
+        st.info("No cross-platform overlaps at comparable lines today.")
     else:
         for (player, stat), picks_list in items[:40]:
             picks_list.sort(key=lambda x: x["edge"], reverse=True)
-            with st.expander(f"**{player}** — {stat}", expanded=False):
+            top   = picks_list[0]
+            lines_lbl = " vs ".join(
+                f"{p['platform'][:2].upper()} {p['line']}" for p in picks_list)
+            title = (f"**{player}** — {stat} · {lines_lbl} · "
+                     f"best: {top['direction']} {top['line']} @ {top['platform']} `{top['edge']:+.1%}`")
+            with st.expander(title, expanded=False):
                 rows = [{
                     "Platform": p["platform"], "Line": p["line"],
                     "Pick": p["direction"], "Model %": f"{p['model_prob']:.1%}",
                     "Edge": f"{p['edge']:+.1%}", "EV/$100": f"${p['ev_per_100']:+.1f}",
-                    "Confidence": p["confidence_tier"], "Risk": p["risk_profile"],
+                    "Conf": p["confidence_tier"], "Risk": p["risk_profile"],
                 } for p in picks_list]
-                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                st.dataframe(style_df(pd.DataFrame(rows)), use_container_width=True, hide_index=True)
 
 # ── Tab 5: Bankroll Tracker ────────────────────────────────────────────────────
 
 with tab5:
-    st.header("💰 Bankroll Tracker")
+    metric_chips([("Bankroll", f"${bankroll:,.0f}"), ("1 Unit", f"${unit_size:.0f}")])
+
+    st.subheader("Recommended Stakes")
+    rows = [{
+        "Selection":  p["selection"],
+        "Type":       p["pick_type"].title(),
+        "Conf":       p["confidence_tier"],
+        "Units":      f"{p.get('units', 0):.1f}u",
+        "Stake":      f"${p['stake_dollars']:.2f}",
+        "Win":        f"${p['potential_win']:.2f}",
+        "R/R":        f"{p['risk_reward_ratio']:.1f}x",
+    } for p in hi[:20]]
+    if rows:
+        st.dataframe(style_df(pd.DataFrame(rows)), use_container_width=True, hide_index=True)
+    else:
+        st.info("No picks to stake today.")
+
+    st.divider()
     c1, c2 = st.columns(2)
-
-    with c1:
-        st.metric("Bankroll", f"${bankroll:,.2f}")
-        st.caption(f"1 unit = ${unit_size:.0f}")
-        st.divider()
-        st.subheader("Recommended Stakes")
-        rows = [{
-            "Selection":  p["selection"],
-            "Type":       p["pick_type"].title(),
-            "Confidence": p["confidence_tier"],
-            "Units":      f"{p.get('units', 0):.1f}u",
-            "Stake ($)":  f"${p['stake_dollars']:.2f}",
-            "Win ($)":    f"${p['potential_win']:.2f}",
-            "R/R":        f"{p['risk_reward_ratio']:.1f}x",
-        } for p in hi[:20]]
-        if rows:
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
     with c2:
+        st.subheader("Notes")
+        st.caption(
+            "Stakes are quarter-Kelly per leg sized as a standalone 3× bet — a real "
+            "multi-leg slip needs every leg to hit, so treat prop stakes as aggressive "
+            "upper bounds. 🐸 goblin edges are somewhat overstated (goblins lower the "
+            "slip multiplier); 😈 demon edges understated. Graded results tracking runs "
+            "on the local dashboard, which has persistent storage."
+        )
+    with c1:
         st.subheader("PrizePicks Slip Builder")
         st.caption("Select 2–6 prop picks to calculate slip EV.")
         prop_hi   = [p for p in hi if p["pick_type"] == "prop"]

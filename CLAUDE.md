@@ -37,7 +37,7 @@ The props pipeline prints filter diagnostics to stderr (`[props] lines=... no_st
 
 Because of this split, nearly every model/metrics function takes an optional DataFrame (`game_logs_df`, `player_logs_df`, `team_logs_df`, `lines_data`, `odds_data`) and falls back to SQLite when it's `None`. **Preserve this convention when changing signatures — a change that only handles one path silently breaks the other app.**
 
-Deployment = push to `main`; Streamlit Cloud auto-redeploys. After redeploy the data store is empty until someone enters the passcode and hits Refresh. `app_cloud.py` deletes `__pycache__` dirs at startup because stale `.pyc` files survive Streamlit Cloud deployments.
+Deployment = push to `main`; Streamlit Cloud auto-redeploys. After redeploy the data store is empty until someone enters the passcode and hits Refresh. `app_cloud.py` deletes `__pycache__` dirs at startup because stale `.pyc` files survive Streamlit Cloud deployments. It also purges stale project modules from `sys.modules` when the loaded `analysis/explain.py` predates its `SCHEMA_VERSION` — Streamlit Cloud can hot-swap source into a running process. **Bump `SCHEMA_VERSION` (and `_REQUIRED_SCHEMA` in `app_cloud.py`) whenever the UI starts depending on new symbols from shared modules**, or the next redeploy crashes with an ImportError.
 
 ## Data sources and costs
 

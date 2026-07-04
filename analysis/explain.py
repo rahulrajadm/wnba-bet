@@ -10,6 +10,11 @@ import re
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+# Bumped whenever the UI starts depending on new symbols from this module or
+# the shared model code. app_cloud.py compares this against the module already
+# loaded in a hot-swapped Streamlit Cloud process and purges stale modules.
+SCHEMA_VERSION = 2
+
 from scipy.stats import norm
 
 from models.props import STAT_MAP, LEAGUE_AVG_TEAM_PTS, prob_over_line

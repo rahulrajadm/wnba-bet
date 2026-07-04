@@ -13,6 +13,18 @@ if "picks.engine" not in sys.modules:
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+# Streamlit Cloud can hot-swap updated source into a RUNNING Python process,
+# which leaves stale project modules in sys.modules — the sibling of the .pyc
+# problem above, and one the .pyc sweep can't fix. If the already-loaded
+# shared code predates what this file needs, purge it all and re-import fresh.
+_REQUIRED_SCHEMA = 2
+import analysis.explain as _explain_probe
+if getattr(_explain_probe, "SCHEMA_VERSION", 0) < _REQUIRED_SCHEMA:
+    for _name in [n for n in list(sys.modules)
+                  if n.split(".")[0] in ("pipeline", "picks", "models", "analysis", "utils")]:
+        sys.modules.pop(_name, None)
+del _explain_probe
+
 import streamlit as st
 import pandas as pd
 from datetime import datetime, date

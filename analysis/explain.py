@@ -12,8 +12,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from scipy.stats import norm
 
-from models.props import STAT_MAP, LEAGUE_AVG_TEAM_PTS
+from models.props import STAT_MAP, LEAGUE_AVG_TEAM_PTS, prob_over_line
 from picks.engine import MIN_EDGE, MODEL_WEIGHT
+from analysis.confidence import get_confidence_tier
 
 # internal stat column → words a user might type for it
 _STAT_WORDS = {
@@ -285,3 +286,190 @@ NO_MATCH_MSG = (
     "(e.g. *Chicago Sky @ Las Vegas Aces over 179.5*). Note: props are only explainable "
     "if they appear in today's pick list."
 )
+
+NO_CONTEXT_MSG = (
+    "I'm not sure which pick that refers to — ask about a specific pick first "
+    "(e.g. *why does A'ja Wilson Points More 19.5 have 91%?*), then follow up with "
+    "*what if she plays 25 minutes?* or *what about a line of 22.5?*"
+)
+
+
+# ── What-if recomputations ─────────────────────────────────────────────────────
+
+def _edge_verdict(prob: float, breakeven: float) -> str:
+    edge = prob - breakeven
+    if edge >= MIN_EDGE:
+        return f"edge **{edge:+.1%}** → would be a **{get_confidence_tier(edge)}** pick"
+    if edge > 0:
+        return f"edge **{edge:+.1%}** → below the {MIN_EDGE:.0%} minimum, would be a **pass**"
+    return f"edge **{edge:+.1%}** → negative EV, would be a **pass**"
+
+
+def whatif_minutes(p: dict, minutes: float) -> str:
+    e = p.get("explain") or {}
+    if not e.get("proj_min"):
+        return (f"Can't re-project **{p['player_name']} {p['stat_type']}** by minutes — this pick "
+                f"used a per-game blend (no reliable minutes sample), not a per-minute rate.")
+    col      = STAT_MAP.get(p["stat_type"])
+    scale    = minutes / e["proj_min"]
+    new_exp  = e["expected"] * scale
+    p_more   = prob_over_line(new_exp, p["line"], col, std=e.get("std"))
+    new_prob = p_more if p["direction"] == "More" else 1.0 - p_more
+    return "\n".join([
+        f"**What-if: {p['player_name']} {p['stat_type']} {p['direction']} {p['line']}** at **{minutes:.0f} minutes** "
+        f"(projection was {e['proj_min']:.1f}):",
+        f"- Expected scales linearly with minutes: {e['expected']} × ({minutes:.0f}/{e['proj_min']:.1f}) = **{new_exp:.1f}**",
+        f"- P({p['direction']} {p['line']}) = **{new_prob:.1%}** (was {p['model_prob']:.1%})",
+        f"- vs {e['breakeven']:.1%} break-even: {_edge_verdict(new_prob, e['breakeven'])} (was {p['edge']:+.1%})",
+        "",
+        "*Assumes her per-minute rate and game-to-game variance hold at the new minutes load.*",
+    ])
+
+
+def whatif_line(p: dict, new_line: float) -> str:
+    e = p.get("explain") or {}
+    if not e:
+        return "That pick predates the explain feature — hit Refresh to rebuild picks."
+    col    = STAT_MAP.get(p["stat_type"])
+    p_more = prob_over_line(e["expected"], new_line, col, std=e.get("std"))
+    d, prob = ("More", p_more) if p_more >= 0.5 else ("Less", 1.0 - p_more)
+    return "\n".join([
+        f"**What-if: {p['player_name']} {p['stat_type']}** at a line of **{new_line}** "
+        f"(actual line {p['line']}):",
+        f"- Same expected value **{e['expected']}** and std {e.get('std', '—')}",
+        f"- P(More {new_line}) = **{p_more:.1%}**, P(Less) = {1 - p_more:.1%} → model side: **{d}** at {prob:.1%}",
+        f"- vs {e['breakeven']:.1%} break-even: {_edge_verdict(prob, e['breakeven'])}",
+    ])
+
+
+def flip_direction(p: dict) -> str:
+    e = p.get("explain") or {}
+    if not e:
+        return "That pick predates the explain feature — hit Refresh to rebuild picks."
+    other      = "Less" if p["direction"] == "More" else "More"
+    other_prob = 1.0 - e["p_more"] if other == "Less" else e["p_more"]
+    lines = [
+        f"**{p['player_name']} {p['stat_type']} {other} {p['line']}** (the other side):",
+        f"- P({other}) = 1 − {p['model_prob']:.1%} = **{other_prob:.1%}**",
+        f"- vs {e['breakeven']:.1%} break-even: {_edge_verdict(other_prob, e['breakeven'])}",
+    ]
+    if p.get("odds_type") in ("goblin", "demon"):
+        lines.append(f"- ⚠️ This is a {p['odds_type']} line — only **More** is offered on the platform, "
+                     f"so {other} isn't actually playable here.")
+    return "\n".join(lines)
+
+
+def compare_player(q_words: set, q: str, nums: list[float], props: list[dict]) -> str | None:
+    matched = [p for p in props if p["player_name"].lower() in q
+               or p["player_name"].lower().split()[-1] in q_words]
+    if not matched:
+        return None
+    stat_words = {w for col, ws in _STAT_WORDS.items() for w in ws}
+    if q_words & stat_words:
+        by_stat = [p for p in matched
+                   if _STAT_WORDS.get(STAT_MAP.get(p["stat_type"]), set()) & q_words]
+        matched = by_stat or matched
+    matched.sort(key=lambda p: (p["stat_type"], -p["edge"]))
+    name = matched[0]["player_name"]
+    out  = [f"**{name} — all current picks:**", ""]
+    for p in matched[:12]:
+        ot = {"goblin": " 🐸", "demon": " 😈"}.get(p.get("odds_type", ""), "")
+        out.append(f"- **{p['stat_type']} {p['direction']} {p['line']}**{ot} ({p['platform']}) — "
+                   f"model {p['model_prob']:.1%}, edge {p['edge']:+.1%} ({p['confidence_tier']})")
+    best = max(matched, key=lambda p: p["edge"])
+    out.append(f"\nBiggest edge: **{best['stat_type']} {best['direction']} {best['line']}** "
+               f"@ {best['platform']} at {best['edge']:+.1%}. "
+               f"Note: different lines on different platforms are different bets — check the line, not just the edge.")
+    return "\n".join(out)
+
+
+def superlative(q_words: set, props: list[dict]) -> str | None:
+    if {"safest", "surest"} & q_words:
+        key, label = (lambda p: p["model_prob"]), "highest model probability"
+    elif {"best", "top", "biggest", "highest", "strongest"} & q_words:
+        key, label = (lambda p: p["edge"]), "biggest edge"
+    else:
+        return None
+    pool = props
+    hit_cols = {col for col, ws in _STAT_WORDS.items() if ws & q_words}
+    if hit_cols:
+        pool = [p for p in props if STAT_MAP.get(p["stat_type"]) in hit_cols] or props
+    if not pool:
+        return None
+    ranked = sorted(pool, key=key, reverse=True)[:5]
+    out = [f"**Top picks by {label}:**", ""]
+    for i, p in enumerate(ranked, 1):
+        ot = {"goblin": " 🐸", "demon": " 😈"}.get(p.get("odds_type", ""), "")
+        out.append(f"{i}. **{p['player_name']} {p['stat_type']} {p['direction']} {p['line']}**{ot} "
+                   f"({p['platform']}) — model {p['model_prob']:.1%}, edge {p['edge']:+.1%}")
+    out.append("\nAsk *why* on any of these for the full breakdown.")
+    return "\n".join(out)
+
+
+# ── Entry point ────────────────────────────────────────────────────────────────
+
+def answer_question(query: str, picks: list[dict], games: list[dict], views: dict, ctx: dict) -> str:
+    """Route a question to a what-if, comparison, ranking, or explanation.
+
+    ctx is a mutable dict (e.g. st.session_state) used to remember the last
+    prop pick so bare follow-ups ("what if she plays 25 minutes?") resolve.
+    """
+    q       = query.lower()
+    q_words = set(re.findall(r"[\w+\-']+", q))
+    # numbers, excluding percentages ("91.3%") which are never lines/minutes
+    nums    = [float(n) for n in re.findall(r"(\d+(?:\.\d+)?)\s*(?!%)", q)
+               if not re.search(re.escape(n) + r"\s*%", q)]
+    props   = [p for p in picks if p["pick_type"] == "prop"]
+
+    def resolve_pick() -> dict | None:
+        scored = sorted(((_score_prop(q, q_words, nums, p), p) for p in props),
+                        key=lambda t: (t[0], t[1]["edge"]), reverse=True)
+        if scored and scored[0][0] >= 3:
+            return scored[0][1]
+        return ctx.get("ask_last_pick")
+
+    # 1. compare a player's picks across platforms/stats
+    if {"compare", "vs", "versus"} & q_words:
+        ans = compare_player(q_words, q, nums, props)
+        if ans:
+            return ans
+
+    # 2. safest / best rankings
+    ans = superlative(q_words, props)
+    if ans:
+        return ans
+
+    # 3. minutes what-if
+    m = re.search(r"(\d+(?:\.\d+)?)\s*(?:minutes|mins?)\b", q)
+    if m:
+        pick = resolve_pick()
+        if pick is None:
+            return NO_CONTEXT_MSG
+        ctx["ask_last_pick"] = pick
+        return whatif_minutes(pick, float(m.group(1)))
+
+    # 4. line what-if — explicit "line of 22.5", or a bare number in a follow-up phrase
+    followup = any(t in q for t in ("what if", "what about", "instead", "how about"))
+    m = re.search(r"line\s+(?:of\s+|at\s+|was\s+|were\s+)?(\d+(?:\.\d+)?)", q)
+    if m or (followup and len(nums) == 1 and not (q_words & {"more", "less", "over", "under"})):
+        pick = resolve_pick()
+        if pick is None:
+            return NO_CONTEXT_MSG
+        ctx["ask_last_pick"] = pick
+        return whatif_line(pick, float(m.group(1)) if m else nums[0])
+
+    # 5. direction flip on the pick in context
+    if followup and (q_words & {"more", "less", "over", "under", "flip", "opposite"}) and not nums:
+        pick = ctx.get("ask_last_pick")
+        if pick is None:
+            return NO_CONTEXT_MSG
+        return flip_direction(pick)
+
+    # 6. plain explanation
+    target = find_target(query, picks, games, views)
+    if target is None:
+        return NO_MATCH_MSG
+    if target["kind"] == "prop":
+        ctx["ask_last_pick"] = target["pick"]
+        return render_prop(target["pick"])
+    return render_game(target["game"], target["market"], target["picks"], target["view"])

@@ -32,7 +32,7 @@ from models.game import predict_game
 from analysis.confidence import TIER_COLORS, TIER_RANK
 from analysis.risk import RISK_COLORS
 from analysis.ev import ev_slip
-from analysis.explain import find_target, render_prop, render_game, NO_MATCH_MSG
+from analysis.explain import answer_question
 from scipy.stats import norm as _norm
 
 st.set_page_config(page_title="WNBA Bet", page_icon="🏀", layout="wide", initial_sidebar_state="expanded")
@@ -745,8 +745,9 @@ with tab5:
 with tab6:
     st.caption(
         "Ask how the model reached a number — every step of the actual arithmetic, no AI involved. "
-        "Try: *why does Breanna Stewart Rebs+Asts More 8.5 have 85%?* or "
-        "*Chicago Sky @ Las Vegas Aces over 179.5*"
+        "Try: *why does Breanna Stewart Rebs+Asts More 8.5 have 85%?*, then follow up with "
+        "*what if she plays 25 minutes?*, *what about a line of 10.5?*, *what about Less?* — "
+        "or ask *safest points pick tonight* / *compare A'ja Wilson across platforms*."
     )
 
     if "ask_history" not in st.session_state:
@@ -761,13 +762,7 @@ with tab6:
     question = st.chat_input("Why does … have …%?")
     if question:
         # Match against ALL picks (pre-filter) so sidebar filters never hide an answer
-        target = find_target(question, all_picks, data["games"], views)
-        if target is None:
-            answer = NO_MATCH_MSG
-        elif target["kind"] == "prop":
-            answer = render_prop(target["pick"])
-        else:
-            answer = render_game(target["game"], target["market"], target["picks"], target["view"])
+        answer = answer_question(question, all_picks, data["games"], views, st.session_state)
         st.session_state.ask_history.append((question, answer))
         with st.chat_message("user"):
             st.markdown(question)

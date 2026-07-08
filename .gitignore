@@ -1,5 +1,6 @@
 .env
 data/wnba_bet.db
+data/.pp_cookie.json
 *.xlsx
 *.xls
 *.csv
@@ -7,3 +8,4 @@ __pycache__/
 *.pyc
 .DS_Store
 .streamlit/secrets.toml
+.playwright-mcp/

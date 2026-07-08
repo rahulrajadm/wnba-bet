@@ -206,8 +206,16 @@ def predict_props(
     if "allowed_direction" not in lines.columns:
         lines["allowed_direction"] = None
 
-    lines = lines.sort_values("fetched_at", ascending=False).drop_duplicates(
-        subset=["platform", "player_name", "stat_type", "odds_type"]
+    # Underdog sends several lines per player+stat under a shared odds_type="standard":
+    # one two-way "balanced" line plus one-way "alternate" lines. PrizePicks instead gives
+    # goblin/demon their own odds_type. Prefer the two-way standard line (allowed_direction
+    # is None) so alternates don't win this dedupe and hide the real line; fall back to an
+    # alternate only when no standard line exists for that player+stat.
+    lines = lines.assign(_is_alt=lines["allowed_direction"].notna())
+    lines = (
+        lines.sort_values(["_is_alt", "fetched_at"], ascending=[True, False])
+        .drop_duplicates(subset=["platform", "player_name", "stat_type", "odds_type"])
+        .drop(columns="_is_alt")
     )
 
     import sys

@@ -43,6 +43,10 @@ Deployment = push to `main`; Streamlit Cloud auto-redeploys. After redeploy the 
 
 - **The Odds API** (`ODDS_API_KEY` in `.env` locally, `st.secrets` on cloud): the only metered source. One refresh = one call (3 credits, ~500/month free tier). Schedule is derived from the same response — don't add separate schedule calls.
 - **PrizePicks, Underdog, ESPN**: free/unofficial, no keys. ESPN box-score fetches are parallelized and failure counts surface in the UI.
+- **PrizePicks is behind DataDome bot protection** (403 on plain requests). The two apps handle it differently on purpose:
+  - **Local** (`ui/app.py` → `get_prizepicks_lines()`): mints a DataDome cookie in a *headed* browser once, caches it to `data/.pp_cookie.json`, and reuses it via `curl_cffi`. The browser only launches when the cookie is stale; normal refreshes are a fast HTTP call. Needs `requirements-local.txt` (`curl_cffi`, `playwright` + `playwright install chromium`) — a desktop session, not a headless server. Headless browsers are detected and get a challenge cookie that still 403s.
+  - **Cloud** (`ui/app_cloud.py` → `fetch_wnba_lines()`): left as plain requests, which 403s on Streamlit Cloud's datacenter IP (DataDome hard-blocks datacenter IPs even with a valid cookie). The cloud app already treats that as "no PrizePicks" and runs on **Underdog props only**. Don't add the browser workaround to the cloud path or `requirements.txt`.
+  - Underdog stamps both its two-way "balanced" lines and one-way "alternate" lines with `odds_type="standard"`, so the `models/props.py` dedupe prefers the balanced line (`allowed_direction is None`) or the model would surface arbitrary alternates instead of the standard line.
 
 ## Prediction pipeline (the big picture)
 

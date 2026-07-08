@@ -45,8 +45,16 @@ with st.sidebar:
             st.session_state["last_refresh"] = time.time()
             with st.spinner("Refreshing…"):
                 get_today_games()
-                get_prizepicks_lines()
-                get_underdog_lines()
+                # PrizePicks is behind DataDome bot protection and returns 403;
+                # don't let its outage abort the whole refresh (Underdog/odds still work).
+                try:
+                    get_prizepicks_lines()
+                except Exception as e:
+                    st.warning(f"PrizePicks unavailable ({e}) — using Underdog props only.")
+                try:
+                    get_underdog_lines()
+                except Exception:
+                    pass
                 try:
                     get_all_odds()
                 except Exception:

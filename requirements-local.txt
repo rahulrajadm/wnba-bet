@@ -1,0 +1,12 @@
+# Local-only dependencies for the PrizePicks DataDome workaround (pipeline/prizepicks.py).
+# NOT installed on Streamlit Cloud — the deployed app (ui/app_cloud.py) never uses this
+# path and runs on Underdog props only. Keep these out of requirements.txt so the cloud
+# build stays lean.
+#
+#   pip install -r requirements-local.txt
+#   playwright install chromium
+#
+# The workaround opens a real (headed) browser once to mint a DataDome cookie, then reuses
+# it via curl_cffi, so a desktop session (not a headless server) is required.
+curl_cffi>=0.7.0
+playwright>=1.40.0

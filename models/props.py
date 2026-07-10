@@ -199,6 +199,11 @@ def predict_props(
         lines = pd.read_sql("SELECT * FROM prop_lines WHERE DATE(fetched_at) = DATE('now')", conn)
         conn.close()
 
+    # No lines at all (both platforms down/empty) → an empty DataFrame has no
+    # columns, so the dedupe's sort_values would KeyError. Nothing to predict.
+    if lines.empty:
+        return []
+
     # DBs written before these columns existed load without them; default so the
     # dedupe below and the direction filter don't KeyError on the SQLite path.
     if "odds_type" not in lines.columns:

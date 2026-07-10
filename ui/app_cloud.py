@@ -4,6 +4,14 @@ Fetches all data in-memory (no SQLite). Refresh is passcode-gated.
 """
 import sys, os, shutil, pathlib
 
+# Cap native thread pools BEFORE numpy/scipy/xgboost load their runtimes.
+# Streamlit Cloud's container advertises many CPUs but allots little memory;
+# OpenMP/BLAS spawning a thread per visible CPU from Streamlit's short-lived
+# script threads segfaults the process (no traceback, just SIGSEGV in the logs).
+for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+           "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
+    os.environ.setdefault(_v, "1")
+
 # Clear stale .pyc bytecode on first startup so Streamlit Cloud always
 # runs the current source — without this, cached .pyc files survive
 # deployments and execute old code even after the .py files are updated.
@@ -17,7 +25,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 # which leaves stale project modules in sys.modules — the sibling of the .pyc
 # problem above, and one the .pyc sweep can't fix. If the already-loaded
 # shared code predates what this file needs, purge it all and re-import fresh.
-_REQUIRED_SCHEMA = 2
+_REQUIRED_SCHEMA = 3
 import analysis.explain as _explain_probe
 if getattr(_explain_probe, "SCHEMA_VERSION", 0) < _REQUIRED_SCHEMA:
     for _name in [n for n in list(sys.modules)

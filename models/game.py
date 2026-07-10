@@ -30,6 +30,15 @@ def load_models():
         calib = joblib.load(os.path.join(MODELS_DIR, "game_calibration.pkl"))
     except Exception:
         calib = {"spread_std": 12.0, "totals_std": 14.0}
+    # Single-threaded predict: XGBoost's OpenMP pool spawns a thread per visible
+    # CPU on every predict; on Streamlit Cloud's small container, predicts fired
+    # from short-lived Streamlit script threads segfault the whole process.
+    # Predictions here are a handful of single rows — threading buys nothing.
+    for m in (ml, sprd, total):
+        try:
+            m.set_params(n_jobs=1)
+        except Exception:
+            pass
     return ml, sprd, total, feats, calib
 
 

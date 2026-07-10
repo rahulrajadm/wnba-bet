@@ -4,6 +4,16 @@ Fetches all data in-memory (no SQLite). Refresh is passcode-gated.
 """
 import sys, os, shutil, pathlib
 
+# The app has been segfaulting on Streamlit Cloud (Linux-only; identical
+# versions render fine on macOS). faulthandler prints every thread's Python
+# stack to stderr on SIGSEGV, which surfaces in the Cloud logs — turning a
+# bare "Segmentation fault" into an exact crash location.
+import faulthandler
+try:
+    faulthandler.enable(file=sys.stderr, all_threads=True)
+except Exception:
+    pass
+
 # Cap native thread pools BEFORE numpy/scipy/xgboost load their runtimes.
 # Streamlit Cloud's container advertises many CPUs but allots little memory;
 # OpenMP/BLAS spawning a thread per visible CPU from Streamlit's short-lived

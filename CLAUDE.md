@@ -66,6 +66,7 @@ Key conventions that span files — read these before touching probabilities:
 3. **Edges are measured against real break-evens, not 0.50**: game picks against de-vigged book odds (`analysis/ev.py:remove_vig`), props against the pick'em slip break-even (~0.577 for a 2-pick 3x, `breakeven_prob`).
 4. **Raw model margins are compressed** (regression to the mean), so vs. the market the model systematically leans underdog/under. Anchoring softens but doesn't remove this — treat "every pick is a dog" output as expected model behavior, not a bug.
 5. Retraining (`models/train.py`) requires the local SQLite DB and uses a chronological 80/20 split; it refits on all data after computing holdout calibration. Trained `.pkl` files are committed in `data/models/`.
+6. **`requirements.txt` pins exact versions for `pandas`/`numpy`/`scikit-learn`/`xgboost`/`scipy`/`joblib`.** These get `joblib.dump`'d straight into the game model `.pkl` files, and xgboost's own docs warn pickle compatibility isn't guaranteed across versions — Streamlit Cloud reinstalls from `requirements.txt` on every rebuild, so an unpinned `>=` can silently resolve to a newer major version on a redeploy and **segfault** the whole process when `load_models()` unpickles an old Booster (no Python traceback, just "Segmentation fault" in the Cloud logs — this happened on 2026-07-10). If you bump any of these, retrain with `python models/train.py` under the *same* environment so the committed `.pkl`s match, and pin the exact resolved version.
 
 ## Stat-name and team-name sync (easy to break)
 

@@ -22,6 +22,20 @@ for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
            "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
     os.environ.setdefault(_v, "1")
 
+# The post-refresh segfault (see faulthandler stack, 2026-07-10) died inside
+# libarrow's jemalloc allocator (AllocateResizableBuffer via NdarrayToArrow)
+# while st.dataframe serialized the styled picks table. Arrow's Linux wheels
+# default to jemalloc, macOS wheels to mimalloc — which is why the crash never
+# reproduced locally on identical versions. ARROW_DEFAULT_MEMORY_POOL is read
+# at pyarrow import, which streamlit has already done by the time this script
+# runs, so switch the default pool at runtime instead.
+try:
+    import pyarrow as _pa
+    _pa.set_memory_pool(_pa.system_memory_pool())
+    del _pa
+except Exception:
+    pass
+
 # Clear stale .pyc bytecode on first startup so Streamlit Cloud always
 # runs the current source — without this, cached .pyc files survive
 # deployments and execute old code even after the .py files are updated.

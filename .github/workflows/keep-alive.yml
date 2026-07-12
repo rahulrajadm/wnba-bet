@@ -1,0 +1,27 @@
+name: Keep Streamlit app awake
+
+on:
+  schedule:
+    # Every 6 hours — Community Cloud sleeps apps after 12h without traffic,
+    # and GitHub cron runs can be delayed, so this leaves plenty of margin.
+    - cron: "37 2,8,14,20 * * *"
+  workflow_dispatch:
+
+jobs:
+  keep-alive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Playwright
+        run: |
+          pip install playwright
+          playwright install --with-deps chromium
+
+      - name: Visit the app
+        run: python .github/scripts/keep_alive.py https://wnba-bet.streamlit.app

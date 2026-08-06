@@ -3,6 +3,7 @@ Fetch WNBA game logs from the ESPN unofficial API.
 Replaces stats.nba.com (unreliable on cloud IPs). No API key required.
 Covers all teams including 2026 expansion franchises.
 """
+import time
 import pandas as pd
 import requests
 from datetime import date, timedelta
@@ -12,6 +13,10 @@ TIMEOUT          = 15
 LOOKBACK         = 35   # days for team logs — current-season form only
 PLAYER_SEASONS   = 2    # calendar years of player data (current + N-1 prior seasons)
 WORKERS          = 6    # parallel box-score requests — keeps ESPN from rate-limiting cloud IPs
+RETRIES          = 3    # retries for the scoreboard call — a total failure here (unlike a
+                         # single box-score miss) zeroes out every pick, so it's worth a
+                         # couple of backed-off retries in case of a transient edge block
+RETRY_BACKOFF    = 1.5  # seconds, doubled each attempt
 
 _HEADERS = {
     "User-Agent": (
@@ -28,10 +33,34 @@ _LABEL_MAP = {
 }
 
 
+_RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+
+
 def _get(url: str, params: dict | None = None) -> dict:
-    r = requests.get(url, headers=_HEADERS, params=params or {}, timeout=TIMEOUT)
-    r.raise_for_status()
-    return r.json()
+    # 403 isn't retried — Akamai edge blocks (the failure mode this API has shown)
+    # return it deterministically, so retrying just triples the latency of a
+    # failure that was never going to succeed. Timeouts/connection errors/5xx/429
+    # look transient, so those get a couple of backed-off attempts.
+    delay = RETRY_BACKOFF
+    for attempt in range(RETRIES + 1):
+        try:
+            r = requests.get(url, headers=_HEADERS, params=params or {}, timeout=TIMEOUT)
+            if r.status_code in _RETRYABLE_STATUS and attempt < RETRIES:
+                time.sleep(delay)
+                delay *= 2
+                continue
+            r.raise_for_status()
+            return r.json()
+        except requests.exceptions.Timeout:
+            if attempt == RETRIES:
+                raise
+            time.sleep(delay)
+            delay *= 2
+        except requests.exceptions.ConnectionError:
+            if attempt == RETRIES:
+                raise
+            time.sleep(delay)
+            delay *= 2
 
 
 def _completed_game_ids(lookback: int = LOOKBACK) -> list[str]:

@@ -209,14 +209,16 @@ def load_all_data():
             team_logs = f_team_logs.result(timeout=45)
             if _cloud_data._last_fetch_failures:
                 st.warning(f"ESPN: {_cloud_data._last_fetch_failures} team box-score fetch(es) failed — team stats may be incomplete.")
-        except Exception:
+        except Exception as e:
             team_logs = pd.DataFrame()
+            st.warning(f"ESPN team game logs unavailable ({e}) — game picks will be empty this refresh.")
         try:
             player_logs = f_player_logs.result(timeout=120)
             if _cloud_data._last_fetch_failures:
                 st.warning(f"ESPN: {_cloud_data._last_fetch_failures} player box-score fetch(es) failed — prop stats may be incomplete.")
-        except Exception:
+        except Exception as e:
             player_logs = pd.DataFrame()
+            st.warning(f"ESPN player game logs unavailable ({e}) — prop picks will be empty this refresh.")
 
     # Derive combo stats for props model
     if not player_logs.empty and "pts" in player_logs.columns:

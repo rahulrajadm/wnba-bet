@@ -2,10 +2,17 @@
 Fetch WNBA game logs from the ESPN unofficial API.
 Replaces stats.nba.com (unreliable on cloud IPs). No API key required.
 Covers all teams including 2026 expansion franchises.
+
+ESPN's site.api.espn.com sits behind Akamai bot detection that 403s plain
+`requests` calls (fingerprinted via TLS/HTTP2 handshake, not IP reputation —
+confirmed by curl_cffi succeeding from the same IP that `requests` was
+blocked on). curl_cffi's browser impersonation spoofs that handshake and
+needs no cookie/browser session, so it works headless on Streamlit Cloud
+unlike the PrizePicks DataDome workaround (see pipeline/prizepicks.py).
 """
 import time
 import pandas as pd
-import requests
+from curl_cffi import requests
 from datetime import date, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -37,14 +44,13 @@ _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
 
 def _get(url: str, params: dict | None = None) -> dict:
-    # 403 isn't retried — Akamai edge blocks (the failure mode this API has shown)
-    # return it deterministically, so retrying just triples the latency of a
-    # failure that was never going to succeed. Timeouts/connection errors/5xx/429
-    # look transient, so those get a couple of backed-off attempts.
     delay = RETRY_BACKOFF
     for attempt in range(RETRIES + 1):
         try:
-            r = requests.get(url, headers=_HEADERS, params=params or {}, timeout=TIMEOUT)
+            r = requests.get(
+                url, headers=_HEADERS, params=params or {}, timeout=TIMEOUT,
+                impersonate="chrome",
+            )
             if r.status_code in _RETRYABLE_STATUS and attempt < RETRIES:
                 time.sleep(delay)
                 delay *= 2
